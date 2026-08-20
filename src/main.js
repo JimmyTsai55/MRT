@@ -13,6 +13,7 @@ const LABEL_COUNT = 7;
 const MONTHS_PER_SECOND = 2; // 1× 播放速度
 
 const state = {
+  style: 'column',
   frame: 0,
   playing: true,
   speed: 1,
@@ -35,7 +36,13 @@ const dom = {
   playhead: document.getElementById('playhead'),
   rankList: document.getElementById('rank-list'),
   rankPanel: document.getElementById('rank-panel'),
-  tooltip: document.getElementById('tooltip')
+  tooltip: document.getElementById('tooltip'),
+  subtitle: document.getElementById('subtitle')
+};
+
+const SUBTITLES = {
+  column: '每站兩根柱：<b class="swatch-in">進站</b> ／ <b class="swatch-out">出站</b>，高度即人次',
+  wall: '沿路線拉起的剖面牆，牆高即當月人次，顏色為路線色'
 };
 
 const lightingEffect = new LightingEffect({
@@ -62,7 +69,8 @@ map.touchZoomRotate.enableRotation();
 map.once('error', (event) => {
   if (state.basemap !== 'none' && /style|source|tile/i.test(String(event?.error?.message || ''))) {
     map.setStyle(blankStyle('#05070d'));
-    setBasemapButtons('none');
+    state.basemap = 'none';
+    setSegmented('basemap', 'none');
   }
 });
 
@@ -128,7 +136,9 @@ function tick(now) {
 }
 
 function render(now = performance.now()) {
-  const maxRef = data.maxima[state.metric];
+  // 剖面牆只有一道牆，「進＋出」是合計，基準要用合計的最大值。
+  const maxRef =
+    state.style === 'wall' && state.metric === 'both' ? data.maxima.sum : data.maxima[state.metric];
   const ranked = rankStations(data.stations, state);
 
   const labelStations = state.showLabels ? pickLabels(ranked, maxRef) : [];
@@ -218,10 +228,10 @@ function segmented(id, handler) {
   });
 }
 
-function setBasemapButtons(value) {
-  state.basemap = value;
+/** 程式改狀態時，同步把對應的分段按鈕點亮。 */
+function setSegmented(id, value) {
   document
-    .querySelectorAll('#basemap button')
+    .querySelectorAll(`#${id} button`)
     .forEach((b) => b.classList.toggle('active', b.dataset.value === value));
 }
 
@@ -235,6 +245,20 @@ function bindControls() {
     render();
   });
 
+  segmented('style', (value) => {
+    state.style = value;
+    dom.subtitle.innerHTML = SUBTITLES[value];
+    if (value === 'wall') {
+      // 牆要壓低視角才看得出「立起來」，太平的角度會變成貼在地上的緞帶。
+      if (map.getPitch() < 58) map.easeTo({ pitch: 62, duration: 700 });
+      // 線性刻度下台北車站一枝獨秀，其他站的剖面會被壓成一條平線，預設改用平方根。
+      if (state.scaleMode === 'linear') {
+        state.scaleMode = 'sqrt';
+        setSegmented('scaleMode', 'sqrt');
+      }
+    }
+    render();
+  });
   segmented('metric', (value) => {
     state.metric = value;
     render();

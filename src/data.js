@@ -48,21 +48,24 @@ export async function loadAll() {
   let maxIn = 0;
   let maxOut = 0;
   let maxNet = 0;
+  let maxSum = 0;
   for (const station of stations) {
     for (let i = 0; i < periods.length; i++) {
       maxIn = Math.max(maxIn, station.in[i]);
       maxOut = Math.max(maxOut, station.out[i]);
       maxNet = Math.max(maxNet, Math.abs(station.in[i] - station.out[i]));
+      maxSum = Math.max(maxSum, station.in[i] + station.out[i]);
     }
   }
 
   return {
     meta: { ...ridershipDoc.meta, stationCount: stations.length },
     stations,
+    stationById: new Map(stations.map((s) => [s.id, s])),
     lines,
     periods,
     networkTotals,
-    maxima: { in: maxIn, out: maxOut, both: Math.max(maxIn, maxOut), net: maxNet }
+    maxima: { in: maxIn, out: maxOut, both: Math.max(maxIn, maxOut), sum: maxSum, net: maxNet }
   };
 }
 

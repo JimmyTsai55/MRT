@@ -133,16 +133,20 @@ def main() -> int:
         )
     stations.sort(key=lambda s: (LINE_ORDER[s["lines"][0]], s["codes"][0]))
 
+    # 車站編號 → 合併後的車站 id，路線折線上的每個點才對得回運量資料。
+    id_by_code = {code: station["id"] for station in stations for code in station["codes"]}
+
     lines_out = []
     for line in LINES:
-        paths = []
+        paths, path_stations = [], []
         for route in ROUTES[line["code"]]:
-            path = [[by_code[c]["lng"], by_code[c]["lat"]] for c in route if c in by_code]
+            present = [c for c in route if c in by_code]
             missing = [c for c in route if c not in by_code]
             if missing:
                 print(f"警告：{line['code']} 缺少站點 {missing}", file=sys.stderr)
-            if len(path) > 1:
-                paths.append(path)
+            if len(present) > 1:
+                paths.append([[by_code[c]["lng"], by_code[c]["lat"]] for c in present])
+                path_stations.append([id_by_code[c] for c in present])
         lines_out.append(
             {
                 "code": line["code"],
@@ -152,6 +156,8 @@ def main() -> int:
                 "hex": line["color"],
                 "operator": line["operator"],
                 "paths": paths,
+                # 與 paths 一一對應：每個轉折點是哪一站，剖面牆要靠它取運量。
+                "stationIds": path_stations,
             }
         )
 

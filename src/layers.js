@@ -1,6 +1,8 @@
-// deck.gl 圖層組裝：路線折線 + 站點底盤 + 進出兩根 3D 柱 + 站名標籤。
+// deck.gl 圖層組裝。兩種呈現方式：
+//   column 柱狀 — 每站兩根柱（進站／出站）
+//   wall   剖面牆 — 沿著路線拉一道垂直的牆，牆的上緣就是運量剖面
 
-import { ColumnLayer, PathLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers';
+import { ColumnLayer, PathLayer, ScatterplotLayer, SolidPolygonLayer, TextLayer } from '@deck.gl/layers';
 import { stationValue, valueAt, formatCount } from './data.js';
 
 export const COLOR_IN = [56, 189, 248];
@@ -14,9 +16,20 @@ function normalize(value, maxRef, scaleMode) {
   return (scaleMode === 'sqrt' ? Math.sqrt(ratio) : ratio) * MAX_HEIGHT;
 }
 
-/** 目前這一幀每個站的柱高（公尺），標籤要對齊柱頂也是用這個。 */
+// 牆比柱子矮一點：牆是連續的，用柱子的高度會整片糊在一起，看不出剖面起伏。
+const STYLE_HEIGHT = { column: 1, wall: 0.5 };
+
+// 牆面由下往上疊三層，透明度遞減，做出漸層消散的光牆感。
+const WALL_BANDS = [
+  [0, 1 / 3, 168],
+  [1 / 3, 2 / 3, 116],
+  [2 / 3, 1, 64]
+];
+
+/** 目前這一幀每個站的高度（公尺），站名標籤也對齊到這個高度。 */
 export function elevationOf(station, state, maxRef) {
-  return normalize(stationValue(station, state.metric, state.frame), maxRef, state.scaleMode);
+  const raw = normalize(stationValue(station, state.metric, state.frame), maxRef, state.scaleMode);
+  return raw * (STYLE_HEIGHT[state.style] ?? 1);
 }
 
 function pathData(lines) {
@@ -24,6 +37,76 @@ function pathData(lines) {
   for (const line of lines) {
     line.paths.forEach((path, i) => {
       out.push({ path, color: line.color, code: line.code, name: line.name, branch: i });
+    });
+  }
+  return out;
+}
+
+/**
+ * 把每條路線切成一段一段的垂直四邊形。
+ * 每個路段再從中點對半切，讓每一片牆都只屬於一個車站——這樣滑鼠指到牆上任何位置
+ * 都知道是哪一站，牆的上緣連起來仍然是一條連續的折線。
+ */
+function wallQuads(data, state, maxRef) {
+  const { lines, stationById } = data;
+  const quads = [];
+
+  for (const line of lines) {
+    line.paths.forEach((path, pathIndex) => {
+      const ids = line.stationIds?.[pathIndex];
+      if (!ids) return;
+
+      const heights = ids.map((id) => {
+        const station = stationById.get(id);
+        return station ? elevationOf(station, state, maxRef) * state.elevScale : 0;
+      });
+
+      for (let i = 0; i < path.length - 1; i++) {
+        const [aLng, aLat] = path[i];
+        const [bLng, bLat] = path[i + 1];
+        const mLng = (aLng + bLng) / 2;
+        const mLat = (aLat + bLat) / 2;
+        const hA = heights[i];
+        const hB = heights[i + 1];
+        const hM = (hA + hB) / 2;
+
+        const half = (p1, h1, p2, h2, station) => {
+          for (const [bottom, top, alpha] of WALL_BANDS) {
+            quads.push({
+              polygon: [
+                [p1[0], p1[1], h1 * bottom],
+                [p2[0], p2[1], h2 * bottom],
+                [p2[0], p2[1], h2 * top],
+                [p1[0], p1[1], h1 * top]
+              ],
+              color: [...line.color, alpha],
+              object: station
+            });
+          }
+        };
+        half([aLng, aLat], hA, [mLng, mLat], hM, stationById.get(ids[i]));
+        half([mLng, mLat], hM, [bLng, bLat], hB, stationById.get(ids[i + 1]));
+      }
+    });
+  }
+  return quads;
+}
+
+/** 牆的上緣：走同一條折線但把 z 拉到當月運量，畫成一條發亮的稜線。 */
+function ridgePaths(data, state, maxRef) {
+  const { lines, stationById } = data;
+  const out = [];
+  for (const line of lines) {
+    line.paths.forEach((path, pathIndex) => {
+      const ids = line.stationIds?.[pathIndex];
+      if (!ids) return;
+      out.push({
+        path: path.map(([lng, lat], i) => {
+          const station = stationById.get(ids[i]);
+          return [lng, lat, station ? elevationOf(station, state, maxRef) * state.elevScale : 0];
+        }),
+        color: line.color
+      });
     });
   }
   return out;
@@ -85,7 +168,41 @@ export function buildLayers({ data, state, maxRef, labelStations, onHover }) {
     onHover
   };
 
-  if (state.metric === 'both') {
+  if (state.style === 'wall') {
+    const trigger3d = [state.frame, state.metric, state.scaleMode, state.elevScale];
+    layers.push(
+      new SolidPolygonLayer({
+        id: 'wall',
+        data: wallQuads(data, state, maxRef),
+        pickable: true,
+        filled: true,
+        extruded: false,
+        // 牆面是垂直的，要讓 deck 用面積最大的平面去做三角化，否則會被壓扁。
+        _full3d: true,
+        getPolygon: (d) => d.polygon,
+        getFillColor: (d) => d.color,
+        updateTriggers: { getPolygon: trigger3d },
+        onHover: (info) => onHover({ ...info, object: info.object?.object })
+      }),
+      new PathLayer({
+        id: 'ridge',
+        data: ridgePaths(data, state, maxRef),
+        pickable: false,
+        widthUnits: 'pixels',
+        getWidth: 2.4,
+        capRounded: true,
+        jointRounded: true,
+        getPath: (d) => d.path,
+        getColor: (d) => [
+          Math.min(255, d.color[0] + 95),
+          Math.min(255, d.color[1] + 95),
+          Math.min(255, d.color[2] + 95),
+          250
+        ],
+        updateTriggers: { getPath: trigger3d }
+      })
+    );
+  } else if (state.metric === 'both') {
     layers.push(
       new ColumnLayer({
         ...columnBase,
