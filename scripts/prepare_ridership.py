@@ -382,7 +382,6 @@ def main() -> int:
     covered = sum(1 for s in out_stations if any(s["in"]) or any(s["out"]))
     doc = {
         "meta": {
-            "synthetic": False,
             "unit": "人次",
             "granularity": "month",
             "generated_by": "scripts/prepare_ridership.py",

@@ -8,8 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "data:stations": "python3 scripts/build_stations.py",
-    "data:demo": "python3 scripts/generate_demo_ridership.py"
+    "data:stations": "python3 scripts/build_stations.py"
   },
   "dependencies": {
     "deck.gl": "^9.3.10",

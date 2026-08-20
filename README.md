@@ -85,9 +85,6 @@ python3 scripts/prepare_ridership.py data/raw/*.csv --until 2021-12
 去掉路線代碼前綴（板橋有兩組閘門，官方分成 `BL板橋` / `Y板橋`，會自動加總回同一站）。
 對不到座標的站會在 stderr 列出來，補進 `scripts/prepare_ridership.py` 的 `ALIASES` 就好。
 
-如果只是想看動畫效果、不想處理資料，`python3 scripts/generate_demo_ridership.py`
-會產生一份 2019–2025 的模擬資料（左上角會標成黃色警告，說明那不是官方數字）。
-
 解析邏輯有煙霧測試（自己造假檔跑三種排版）：
 
 ```bash
@@ -110,7 +107,6 @@ public/data/
   ridership.json               每站每月進出人次（目前是 2018-01 ~ 2021-12 的真實資料）
 scripts/
   build_stations.py            原始站點 GeoJSON → stations.json / lines.json
-  generate_demo_ridership.py   產生模擬示範資料
   prepare_ridership.py         官方 ODS/CSV → ridership.json
   test_prepare_ridership.py    上面那支的煙霧測試
   bundle_singlefile.mjs        打包成單一 HTML（見下）
@@ -121,7 +117,7 @@ data/source/                   原始站點資料（進版控管，方便重跑�
 
 ```jsonc
 {
-  "meta": { "synthetic": false, "unit": "人次", "granularity": "month" },
+  "meta": { "unit": "人次", "granularity": "month", "source": "..." },
   "periods": ["2019-01", "2019-02", "..."],
   "stations": [{ "id": "R10", "in": [1234, 1111], "out": [1300, 1180] }]
 }
@@ -163,6 +159,15 @@ node scripts/bundle_singlefile.mjs   # → dist/standalone.html（單檔，含�
 - 現成資料只到 2021-12。2022 年之後要自己從官方站台下載補上（見上面）。
 - 目前只做到「各站進出量」。要做 OD 流向（哪裡到哪裡）得換 `ArcLayer` 或 `TripsLayer`，
   資料源要改用分時 OD 表。
+
+## 資料原則
+
+圖上的每一個數字都來自官方統計，沒有任何推估或補值。
+對不到座標的站會被標出來而不是猜一個位置，缺的月份就是缺（不內插補洞）——
+時間軸上的內插只影響動畫的中間影格，`ridership.json` 裡存的都是原始月統計值。
+
+`scripts/test_prepare_ridership.py` 裡有幾筆刻意造出來的假資料（含「火星站」這種不存在的站名），
+那是用來驗證解析器與站名比對的測試夾具，不會進到 `public/data`，也不會出現在圖上。
 
 ## 資料來源
 

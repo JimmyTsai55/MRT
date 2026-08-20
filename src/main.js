@@ -87,7 +87,8 @@ async function start() {
     data = await loadAll();
   } catch (error) {
     dom.loading.innerHTML = `<div class="loading-inner"><p>資料載入失敗：${error.message}</p>
-      <p>先跑 <code>python3 scripts/build_stations.py</code> 和 <code>python3 scripts/generate_demo_ridership.py</code> 產生 public/data 下的資料。</p></div>`;
+      <p>public/data 下需要 stations.json、lines.json、ridership.json；<br>
+      產生方式見 README 的〈換上／更新資料〉。</p></div>`;
     return;
   }
 
@@ -95,17 +96,9 @@ async function start() {
   dom.scrub.max = String(data.periods.length - 1);
   dom.scrub.value = String(state.frame);
 
-  if (data.meta.synthetic) {
-    dom.badge.innerHTML =
-      '⚠️ 目前是<b>模擬示範資料</b>，不是官方數字。<br>換上真實資料：下載 ' +
-      '<a href="https://www.metro.taipei/cp.aspx?n=FF31501BEBDD0136" target="_blank" rel="noreferrer">北捷各站進出量統計</a>' +
-      ' 後執行 scripts/prepare_ridership.py。';
-  } else {
-    dom.badge.classList.add('real');
-    dom.badge.innerHTML = `資料來源：${data.meta.source || '北捷各站進出量統計'}　${data.periods[0]} ~ ${
-      data.periods[data.periods.length - 1]
-    }　共 ${data.meta.stationCount} 站`;
-  }
+  dom.badge.innerHTML = `資料來源：${data.meta.source || '北捷各站進出量統計'}　${data.periods[0]} ~ ${
+    data.periods[data.periods.length - 1]
+  }　共 ${data.meta.stationCount} 站`;
 
   drawSpark(dom.spark, data.networkTotals, data.periods);
   updateRankBoard = createRankBoard(dom.rankList, data.stations);
