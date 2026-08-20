@@ -3,7 +3,7 @@
 //   wall   剖面牆 — 沿著路線拉一道垂直的牆，牆的上緣就是運量剖面
 
 import { ColumnLayer, PathLayer, ScatterplotLayer, SolidPolygonLayer, TextLayer } from '@deck.gl/layers';
-import { stationValue, valueAt, formatCount } from './data.js';
+import { stationValue, valueAt, formatCount, positionOf } from './data.js';
 
 export const COLOR_IN = [56, 189, 248];
 export const COLOR_OUT = [251, 146, 60];
@@ -52,11 +52,13 @@ export function elevationOf(station, state, maxRef) {
   return raw * (STYLE_HEIGHT[state.style] ?? 1);
 }
 
-function pathData(lines) {
+function pathData(lines, state) {
+  const schematic = state.style === 'schematic';
   const out = [];
   for (const line of lines) {
-    line.paths.forEach((path, i) => {
-      out.push({ path, color: line.color, code: line.code, name: line.name, branch: i });
+    const paths = schematic ? line.schematicPaths || [] : line.paths;
+    paths.forEach((path, i) => {
+      if (path.length > 1) out.push({ path, color: line.color, code: line.code, name: line.name, branch: i });
     });
   }
   return out;
@@ -141,16 +143,18 @@ export function buildLayers({ data, state, maxRef, labelStations, onHover }) {
     layers.push(
       new PathLayer({
         id: 'routes',
-        data: pathData(lines),
+        data: pathData(lines, state),
         pickable: false,
         widthUnits: 'meters',
-        getWidth: 55,
-        widthMinPixels: 1.6,
-        widthMaxPixels: 7,
+        // 示意圖用官方路網圖那種粗線，地理模式維持細線才不會蓋住站點。
+        getWidth: state.style === 'schematic' ? 210 : 55,
+        widthMinPixels: state.style === 'schematic' ? 4 : 1.6,
+        widthMaxPixels: state.style === 'schematic' ? 26 : 7,
         capRounded: true,
         jointRounded: true,
         getPath: (d) => d.path,
-        getColor: (d) => [...d.color, 205]
+        getColor: (d) => [...d.color, state.style === 'schematic' ? 255 : 205],
+        updateTriggers: { getPath: state.style, getWidth: state.style }
       })
     );
   }
@@ -163,7 +167,7 @@ export function buildLayers({ data, state, maxRef, labelStations, onHover }) {
       data: GLOW_RINGS.flatMap(([scale, alpha]) => stations.map((s) => ({ s, scale, alpha }))),
       pickable: false,
       radiusUnits: 'meters',
-      getPosition: (d) => d.s.position,
+      getPosition: (d) => positionOf(d.s, state),
       getRadius: (d) => {
         const ratio = Math.min(
           1,
@@ -185,12 +189,19 @@ export function buildLayers({ data, state, maxRef, labelStations, onHover }) {
       data: stations,
       pickable: true,
       radiusUnits: 'meters',
-      getRadius: (d) => (d.transfer ? 120 : 80),
+      getRadius: (d) =>
+        state.style === 'schematic' ? (d.transfer ? 240 : 150) : d.transfer ? 120 : 80,
       radiusMinPixels: 1.5,
-      radiusMaxPixels: 8,
-      getPosition: (d) => d.position,
-      getFillColor: (d) => [...d.lineColor, 210],
-      stroked: false,
+      radiusMaxPixels: state.style === 'schematic' ? 14 : 8,
+      getPosition: (d) => positionOf(d, state),
+      // 示意圖用官方路網圖的站點樣式：白底、線色外框，轉乘站更大一圈。
+      getFillColor: (d) => (state.style === 'schematic' ? [246, 250, 255, 255] : [...d.lineColor, 210]),
+      stroked: state.style === 'schematic',
+      lineWidthUnits: 'meters',
+      getLineWidth: 70,
+      lineWidthMinPixels: 1.5,
+      getLineColor: (d) => [...d.lineColor, 255],
+      updateTriggers: { getPosition: state.style, getRadius: state.style, getFillColor: state.style },
       onHover
     })
   );
@@ -206,10 +217,10 @@ export function buildLayers({ data, state, maxRef, labelStations, onHover }) {
     radiusUnits: 'meters',
     diskResolution: 10,
     elevationScale: state.elevScale,
-    getPosition: (d) => d.position,
+    getPosition: (d) => positionOf(d, state),
     material: { ambient: 0.45, diffuse: 0.65, shininess: 40, specularColor: [70, 82, 100] },
     transitions: { getElevation: 0 },
-    updateTriggers: { getElevation: trigger, getFillColor: trigger },
+    updateTriggers: { getElevation: trigger, getFillColor: trigger, getPosition: state.style },
     onHover
   };
 
@@ -254,7 +265,7 @@ export function buildLayers({ data, state, maxRef, labelStations, onHover }) {
       new ColumnLayer({
         ...columnBase,
         id: 'column-in',
-        radius: 92,
+        radius: state.style === 'schematic' ? 150 : 92,
         offset: [-1.15, 0],
         getElevation: (d) => normalize(valueAt(d.in, state.frame), maxRef, state.scaleMode),
         getFillColor: [...COLOR_IN, 224],
@@ -263,7 +274,7 @@ export function buildLayers({ data, state, maxRef, labelStations, onHover }) {
       new ColumnLayer({
         ...columnBase,
         id: 'column-out',
-        radius: 92,
+        radius: state.style === 'schematic' ? 150 : 92,
         offset: [1.15, 0],
         getElevation: (d) => normalize(valueAt(d.out, state.frame), maxRef, state.scaleMode),
         getFillColor: [...COLOR_OUT, 224],
@@ -275,7 +286,7 @@ export function buildLayers({ data, state, maxRef, labelStations, onHover }) {
       new ColumnLayer({
         ...columnBase,
         id: 'column-net',
-        radius: 118,
+        radius: state.style === 'schematic' ? 190 : 118,
         getElevation: (d) => normalize(stationValue(d, 'net', state.frame), maxRef, state.scaleMode),
         // 進站多（居住型）用藍、出站多（就業／商業型）用橘。
         getFillColor: (d) =>
@@ -288,7 +299,7 @@ export function buildLayers({ data, state, maxRef, labelStations, onHover }) {
       new ColumnLayer({
         ...columnBase,
         id: `column-${state.metric}`,
-        radius: 118,
+        radius: state.style === 'schematic' ? 190 : 118,
         getElevation: (d) => normalize(valueAt(isIn ? d.in : d.out, state.frame), maxRef, state.scaleMode),
         getFillColor: [...(isIn ? COLOR_IN : COLOR_OUT), 224]
       })
@@ -303,8 +314,8 @@ export function buildLayers({ data, state, maxRef, labelStations, onHover }) {
         pickable: false,
         billboard: true,
         getPosition: (d) => [
-          d.position[0],
-          d.position[1],
+          positionOf(d, state)[0],
+          positionOf(d, state)[1],
           elevationOf(d, state, maxRef) * state.elevScale + 260
         ],
         getText: (d) => `${d.name}\n${formatCount(stationValue(d, state.metric, state.frame))}`,
@@ -320,7 +331,7 @@ export function buildLayers({ data, state, maxRef, labelStations, onHover }) {
         outlineColor: [4, 8, 16, 210],
         // 關掉深度測試，標籤才不會被前面的高柱子切掉半個字。
         parameters: { depthCompare: 'always' },
-        updateTriggers: { getPosition: trigger, getText: trigger, getSize: trigger }
+        updateTriggers: { getPosition: [trigger, state.style], getText: trigger, getSize: trigger }
       })
     );
   }

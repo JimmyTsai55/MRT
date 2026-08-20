@@ -4,8 +4,8 @@ import { MapboxOverlay } from '@deck.gl/mapbox';
 import { AmbientLight, DirectionalLight, LightingEffect, WebMercatorViewport } from '@deck.gl/core';
 
 import './style.css';
-import { BASEMAPS, INITIAL_VIEW, blankStyle } from './basemap.js';
-import { loadAll, formatCount, formatPeriod } from './data.js';
+import { BASEMAPS, INITIAL_VIEW, SCHEMATIC_VIEW, blankStyle } from './basemap.js';
+import { loadAll, formatCount, formatPeriod, positionOf } from './data.js';
 import { buildLayers, elevationOf } from './layers.js';
 import { createRankBoard, drawSpark, rankStations, renderTooltip } from './ui.js';
 
@@ -42,7 +42,8 @@ const dom = {
 
 const SUBTITLES = {
   column: '每站兩根柱：<b class="swatch-in">進站</b> ／ <b class="swatch-out">出站</b>，高度即人次',
-  wall: '沿路線拉起的剖面牆，牆高即當月人次，顏色為路線色'
+  wall: '沿路線拉起的剖面牆，牆高即當月人次，顏色為路線色',
+  schematic: '不用真實地理，改用官方路網圖那種等距示意座標，站與站不再擠在一起'
 };
 
 const lightingEffect = new LightingEffect({
@@ -197,7 +198,8 @@ function pickLabels(ranked, maxRef) {
 
     const station = entry.station;
     const top = elevationOf(station, state, maxRef) * state.elevScale + 260;
-    const [x, y, depth] = viewport.project([station.position[0], station.position[1], top]);
+    const [lng, lat] = positionOf(station, state);
+    const [x, y, depth] = viewport.project([lng, lat, top]);
     if (depth > 1 || !Number.isFinite(x)) continue; // 在相機後方
     if (taken.some((p) => Math.abs(p[0] - x) < LABEL_GAP_X && Math.abs(p[1] - y) < LABEL_GAP_Y)) continue;
 
@@ -248,6 +250,29 @@ function bindControls() {
   segmented('style', (value) => {
     state.style = value;
     dom.subtitle.innerHTML = SUBTITLES[value];
+    if (value === 'schematic') {
+      // 示意座標底下沒有地理意義，底圖要關掉，並轉正（示意圖是畫在正交平面上的）。
+      state.basemap = 'none';
+      setSegmented('basemap', 'none');
+      map.setStyle(blankStyle('#05070d'));
+      // 依示意圖的實際範圍框選。cameraForBounds 是以 pitch 0 計算的，
+      // 所以先取水平視角的相機、再補上傾角與一點縮放，畫面才不會縮成一小坨。
+      const camera = map.cameraForBounds(data.schematicBounds, {
+        padding: { top: 70, bottom: 120, left: 80, right: 210 },
+        bearing: 0
+      });
+      map.easeTo({
+        ...(camera || SCHEMATIC_VIEW),
+        zoom: (camera?.zoom ?? SCHEMATIC_VIEW.zoom) + 0.3,
+        pitch: SCHEMATIC_VIEW.pitch,
+        bearing: 0,
+        duration: 800
+      });
+      if (state.scaleMode === 'sqrt') {
+        state.scaleMode = 'linear';
+        setSegmented('scaleMode', 'linear');
+      }
+    }
     if (value === 'wall') {
       // 牆要壓低視角才看得出「立起來」，太平的角度會變成貼在地上的緞帶。
       if (map.getPitch() < 58) map.easeTo({ pitch: 62, duration: 700 });

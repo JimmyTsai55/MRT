@@ -14,6 +14,14 @@ export function blankStyle(color) {
   };
 }
 
+// 示意圖是畫在一個正交平面上的，所以轉正、拉遠一點把整張圖框進來。
+export const SCHEMATIC_VIEW = {
+  center: [121.52, 25.03],
+  zoom: 11.35,
+  pitch: 48,
+  bearing: 0
+};
+
 export const INITIAL_VIEW = {
   center: [121.524, 24.999],
   zoom: 11.42,

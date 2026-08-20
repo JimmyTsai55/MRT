@@ -12,11 +12,24 @@ async function getJSON(name) {
   return response.json();
 }
 
+// 示意座標（站距 = 1）換算成假的經緯度，這樣所有 deck 圖層與 MapLibre 的
+// 平移／縮放／旋轉都不用改，只是底下的地理意義換掉了（所以底圖會自動關掉）。
+export const SCHEMATIC_ORIGIN = [121.52, 25.03];
+const SCHEMATIC_UNIT_METERS = 1250;
+
+function toFakeLngLat([x, y]) {
+  const [lng0, lat0] = SCHEMATIC_ORIGIN;
+  const metersPerLat = 110574;
+  const metersPerLng = 111320 * Math.cos((lat0 * Math.PI) / 180);
+  return [lng0 + (x * SCHEMATIC_UNIT_METERS) / metersPerLng, lat0 + (y * SCHEMATIC_UNIT_METERS) / metersPerLat];
+}
+
 export async function loadAll() {
-  const [stationsDoc, linesDoc, ridershipDoc] = await Promise.all([
+  const [stationsDoc, linesDoc, ridershipDoc, schematicDoc] = await Promise.all([
     getJSON('stations.json'),
     getJSON('lines.json'),
-    getJSON('ridership.json')
+    getJSON('ridership.json'),
+    getJSON('schematic.json').catch(() => null)
   ]);
 
   const lines = linesDoc.lines;
@@ -28,15 +41,25 @@ export async function loadAll() {
     .filter((station) => seriesById.has(station.id))
     .map((station, index) => {
       const series = seriesById.get(station.id);
+      const schematic = schematicDoc?.stations?.[station.id];
       return {
         ...station,
         index,
         position: [station.lng, station.lat],
+        schematicPosition: schematic ? toFakeLngLat(schematic) : [station.lng, station.lat],
         lineColor: colorByLine.get(station.lines[0]) || [150, 150, 150],
         in: Float64Array.from(series.in),
         out: Float64Array.from(series.out)
       };
     });
+
+  // 路線折線在示意圖裡要重新用示意座標串一次。
+  const byId = new Map(stations.map((s) => [s.id, s]));
+  for (const line of lines) {
+    line.schematicPaths = (line.stationIds || []).map((ids) =>
+      ids.map((id) => byId.get(id)?.schematicPosition).filter(Boolean)
+    );
+  }
 
   // 全網每月總量，時間軸下方的小面積圖用。
   const networkTotals = periods.map((_, i) =>
@@ -61,12 +84,28 @@ export async function loadAll() {
   return {
     meta: { ...ridershipDoc.meta, stationCount: stations.length },
     stations,
-    stationById: new Map(stations.map((s) => [s.id, s])),
+    stationById: byId,
+    hasSchematic: Boolean(schematicDoc),
+    schematicBounds: boundsOf(stations.map((s) => s.schematicPosition)),
     lines,
     periods,
     networkTotals,
     maxima: { in: maxIn, out: maxOut, both: Math.max(maxIn, maxOut), sum: maxSum, net: maxNet }
   };
+}
+
+function boundsOf(positions) {
+  const lngs = positions.map((p) => p[0]);
+  const lats = positions.map((p) => p[1]);
+  return [
+    [Math.min(...lngs), Math.min(...lats)],
+    [Math.max(...lngs), Math.max(...lats)]
+  ];
+}
+
+/** 目前呈現方式下，一個站要畫在哪裡。 */
+export function positionOf(station, state) {
+  return state.style === 'schematic' ? station.schematicPosition : station.position;
 }
 
 /** 兩個月之間做線性內插，讓柱子連續長高／變矮而不是一格一格跳。 */

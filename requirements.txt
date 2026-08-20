@@ -1,4 +1,5 @@
 # 資料前處理用（前端不需要）
 pandas>=2.0
+numpy>=1.24    # 產生路網示意座標
 odfpy>=1.4      # 讀官方的 .ods
 openpyxl>=3.1   # 讀 .xlsx
