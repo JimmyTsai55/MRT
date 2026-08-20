@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.vite/
+data/raw/
+__pycache__/
+*.pyc
+.DS_Store
+.shot*.mjs
+.scratch/

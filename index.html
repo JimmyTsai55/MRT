@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <title>台北捷運各站進出人次 · 3D 動畫</title>
+    <meta name="description" content="用 deck.gl 的 3D 柱狀圖呈現台北捷運各站每月進出人次的變化" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🚇</text></svg>" />
+  </head>
+  <body>
+    <div id="map"></div>
+
+    <!-- 載入中 -->
+    <div id="loading" class="loading">
+      <div class="loading-inner">
+        <div class="loading-bar"><span></span></div>
+        <p>載入路網與運量資料…</p>
+      </div>
+    </div>
+
+    <!-- 左上：標題 -->
+    <header class="panel panel-title">
+      <h1>台北捷運 · 各站進出人次</h1>
+      <p class="subtitle">每站兩根柱：<b class="swatch-in">進站</b> ／ <b class="swatch-out">出站</b>，高度即人次</p>
+      <p id="data-badge" class="badge">資料載入中</p>
+    </header>
+
+    <!-- 左下：控制面板 -->
+    <section class="panel panel-controls" id="controls">
+      <div class="control-row">
+        <label class="control-label">顯示</label>
+        <div class="segmented" id="metric">
+          <button data-value="both" class="active">進＋出</button>
+          <button data-value="in">進站</button>
+          <button data-value="out">出站</button>
+          <button data-value="net">淨流</button>
+        </div>
+      </div>
+      <div class="control-row">
+        <label class="control-label">高度</label>
+        <div class="segmented" id="scaleMode">
+          <button data-value="linear" class="active">線性</button>
+          <button data-value="sqrt">平方根</button>
+        </div>
+      </div>
+      <div class="control-row">
+        <label class="control-label" for="elev">柱高</label>
+        <input type="range" id="elev" min="0.3" max="3" step="0.05" value="1" />
+      </div>
+      <div class="control-row">
+        <label class="control-label">底圖</label>
+        <div class="segmented" id="basemap">
+          <button data-value="dark" class="active">暗色</button>
+          <button data-value="light">亮色</button>
+          <button data-value="none">無</button>
+        </div>
+      </div>
+      <div class="control-row control-row-checks">
+        <label class="check"><input type="checkbox" id="labels" checked /> 站名</label>
+        <label class="check"><input type="checkbox" id="routes" checked /> 路線</label>
+        <button class="ghost" id="reset">重設視角</button>
+      </div>
+    </section>
+
+    <!-- 右上：排行榜 -->
+    <section class="panel panel-rank" id="rank-panel">
+      <div class="rank-head">
+        <h2>當月排行</h2>
+        <button class="ghost small" id="rank-toggle" title="收合">－</button>
+      </div>
+      <div class="rank-list" id="rank-list"></div>
+    </section>
+
+    <!-- 底部：時間軸 -->
+    <footer class="panel panel-timeline">
+      <button id="play" class="play" title="播放／暫停（空白鍵）">▶</button>
+      <div class="timeline-main">
+        <div class="timeline-head">
+          <span id="period" class="period">—</span>
+          <span id="network-total" class="network-total"></span>
+        </div>
+        <div class="spark-wrap">
+          <svg id="spark" preserveAspectRatio="none" viewBox="0 0 1000 60"></svg>
+          <div id="playhead" class="playhead"></div>
+        </div>
+        <input type="range" id="scrub" min="0" max="1" step="0.01" value="0" />
+      </div>
+      <div class="speed">
+        <label class="control-label" for="speed">速度</label>
+        <select id="speed">
+          <option value="0.5">0.5×</option>
+          <option value="1" selected>1×</option>
+          <option value="2">2×</option>
+          <option value="4">4×</option>
+        </select>
+      </div>
+    </footer>
+
+    <div id="tooltip" class="tooltip hidden"></div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

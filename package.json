@@ -1,0 +1,21 @@
+{
+  "name": "taipei-mrt-3d",
+  "version": "0.1.0",
+  "private": true,
+  "description": "台北捷運各站進出人次 3D 動畫視覺化（deck.gl + MapLibre GL）",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "data:stations": "python3 scripts/build_stations.py",
+    "data:demo": "python3 scripts/generate_demo_ridership.py"
+  },
+  "dependencies": {
+    "deck.gl": "^9.3.10",
+    "maplibre-gl": "^5.24.0"
+  },
+  "devDependencies": {
+    "vite": "^8.2.2"
+  }
+}
