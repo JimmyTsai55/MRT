@@ -21,10 +21,30 @@ const STYLE_HEIGHT = { column: 1, wall: 0.5 };
 
 // 牆面由下往上疊三層，透明度遞減，做出漸層消散的光牆感。
 const WALL_BANDS = [
-  [0, 1 / 3, 168],
-  [1 / 3, 2 / 3, 116],
-  [2 / 3, 1, 64]
+  [0, 1 / 3, 130],
+  [1 / 3, 2 / 3, 78],
+  [2 / 3, 1, 34]
 ];
+
+// 加性混合：重疊處變亮而不是變濁。市中心六條線疊在一起時差別最明顯，
+// 順便關掉深度寫入，半透明的牆才不會互相把對方裁掉。
+// 光暈的三圈：[半徑倍率, 透明度]，由外而內。
+const GLOW_RINGS = [
+  [1, 10],
+  [0.6, 13],
+  [0.3, 17]
+];
+
+const ADDITIVE = {
+  blend: true,
+  blendColorOperation: 'add',
+  blendColorSrcFactor: 'src-alpha',
+  blendColorDstFactor: 'one',
+  blendAlphaOperation: 'add',
+  blendAlphaSrcFactor: 'one',
+  blendAlphaDstFactor: 'one',
+  depthWriteEnabled: false
+};
 
 /** 目前這一幀每個站的高度（公尺），站名標籤也對齊到這個高度。 */
 export function elevationOf(station, state, maxRef) {
@@ -135,6 +155,29 @@ export function buildLayers({ data, state, maxRef, labelStations, onHover }) {
     );
   }
 
+  // 地面光暈：量體越大暈得越開。單一個圓盤看起來會像貼紙，所以疊三圈由外而內加亮，
+  // 配合加性混合就變成有衰減的光暈，密集區也會自然連成一片。
+  layers.push(
+    new ScatterplotLayer({
+      id: 'ground-glow',
+      data: GLOW_RINGS.flatMap(([scale, alpha]) => stations.map((s) => ({ s, scale, alpha }))),
+      pickable: false,
+      radiusUnits: 'meters',
+      getPosition: (d) => d.s.position,
+      getRadius: (d) => {
+        const ratio = Math.min(
+          1,
+          Math.abs(stationValue(d.s, state.metric, state.frame)) / (maxRef || 1)
+        );
+        return (150 + Math.sqrt(ratio) * 1000) * d.scale;
+      },
+      getFillColor: (d) => [...d.s.lineColor, d.alpha],
+      stroked: false,
+      parameters: ADDITIVE,
+      updateTriggers: { getRadius: trigger }
+    })
+  );
+
   // 站點底盤：運量為零（例如環狀線通車前）的站也還看得到位置。
   layers.push(
     new ScatterplotLayer({
@@ -156,7 +199,9 @@ export function buildLayers({ data, state, maxRef, labelStations, onHover }) {
     data: stations,
     pickable: true,
     extruded: true,
-    stroked: false,
+    // 頂面描一圈亮邊，柱子在暗底圖上比較「立」得起來。
+    stroked: true,
+    lineWidthMinPixels: 1,
     filled: true,
     radiusUnits: 'meters',
     diskResolution: 10,
@@ -181,6 +226,7 @@ export function buildLayers({ data, state, maxRef, labelStations, onHover }) {
         _full3d: true,
         getPolygon: (d) => d.polygon,
         getFillColor: (d) => d.color,
+        parameters: ADDITIVE,
         updateTriggers: { getPolygon: trigger3d },
         onHover: (info) => onHover({ ...info, object: info.object?.object })
       }),
@@ -199,6 +245,7 @@ export function buildLayers({ data, state, maxRef, labelStations, onHover }) {
           Math.min(255, d.color[2] + 95),
           250
         ],
+        parameters: { ...ADDITIVE, depthWriteEnabled: false },
         updateTriggers: { getPath: trigger3d }
       })
     );
@@ -210,7 +257,8 @@ export function buildLayers({ data, state, maxRef, labelStations, onHover }) {
         radius: 92,
         offset: [-1.15, 0],
         getElevation: (d) => normalize(valueAt(d.in, state.frame), maxRef, state.scaleMode),
-        getFillColor: [...COLOR_IN, 224]
+        getFillColor: [...COLOR_IN, 224],
+        getLineColor: [190, 235, 255, 255]
       }),
       new ColumnLayer({
         ...columnBase,
@@ -218,7 +266,8 @@ export function buildLayers({ data, state, maxRef, labelStations, onHover }) {
         radius: 92,
         offset: [1.15, 0],
         getElevation: (d) => normalize(valueAt(d.out, state.frame), maxRef, state.scaleMode),
-        getFillColor: [...COLOR_OUT, 224]
+        getFillColor: [...COLOR_OUT, 224],
+        getLineColor: [255, 214, 170, 255]
       })
     );
   } else if (state.metric === 'net') {
