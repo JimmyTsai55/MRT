@@ -118,6 +118,44 @@ def main() -> int:
             assert series(doc, "R28")["in"] == [10]
             print("✓ ODS 檔案讀取")
 
+        # 6) 跨檔案的同一個月份是覆蓋而不是相加（官方逐年檔的結尾常掛下個月的殘料），
+        #    而且分兩次 --merge 出來的結果要跟一次全跑一樣
+        a_csv = tmp / "yearA.csv"
+        b_csv = tmp / "yearB.csv"
+        pd.DataFrame(
+            [
+                {"年月": "2024-12", "站名": "淡水", "進站人次": 1000, "出站人次": 1000},
+                {"年月": "2025-01", "站名": "淡水", "進站人次": 3, "出站人次": 4},  # 殘月
+            ]
+        ).to_csv(a_csv, index=False, encoding="utf-8-sig")
+        pd.DataFrame(
+            [{"年月": "2025-01", "站名": "淡水", "進站人次": 900, "出站人次": 950}]
+        ).to_csv(b_csv, index=False, encoding="utf-8-sig")
+
+        doc = run(a_csv, out)
+        assert series(doc, "R28")["in"] == [1000, 3]
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), str(b_csv), "--out", str(out), "--merge"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        merged = json.loads(out.read_text(encoding="utf-8"))
+        assert merged["periods"] == ["2024-12", "2025-01"], merged["periods"]
+        # 2025-01 要是 900 而不是 903
+        assert series(merged, "R28")["in"] == [1000, 900], series(merged, "R28")
+
+        both = run(a_csv, out)  # 重置後一次吃兩個檔
+        both = subprocess.run(
+            [sys.executable, str(SCRIPT), str(a_csv), str(b_csv), "--out", str(out)],
+            capture_output=True,
+            text=True,
+        )
+        assert both.returncode == 0, both.stderr
+        full = json.loads(out.read_text(encoding="utf-8"))
+        assert full["periods"] == merged["periods"] and full["stations"] == merged["stations"]
+        print("✓ 跨檔案覆蓋 + --merge 與一次全跑等價")
+
     print("\n全部通過。")
     return 0
 

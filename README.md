@@ -53,9 +53,16 @@ python3 scripts/prepare_ridership.py --inspect data/raw/各站進出量統計.od
 python3 scripts/prepare_ridership.py data/raw/*.ods
 
 # 常用選項
+#   --merge                           併進既有的 ridership.json（補新年度用，不必重跑舊年度）
 #   --since 2018-01 --until 2024-12   只取這段期間（官方檔頭尾常有不完整的殘月）
 #   --layout wide                     自動判斷錯的時候手動指定
 #   --source "..."                    寫進 meta.source，會顯示在左上角
+```
+
+所以要補 2022 年之後，只要下載新的年度然後：
+
+```bash
+python3 scripts/prepare_ridership.py data/raw/2022.ods data/raw/2023.ods --merge
 ```
 
 repo 現在這份是這樣來的（要重跑或驗證的話）：
@@ -80,6 +87,8 @@ python3 scripts/prepare_ridership.py data/raw/*.csv --until 2021-12
 | `wide` | 第一欄年月，其餘每欄一站，另有「類別」欄或不同工作表區分進出 |
 | `od` | 起訖對：日期／時段／進站／出站／人次，程式會分別加總成各站的進出量 |
 
+同一個檔案裡的列會累加（逐日資料自動收成月統計），但**跨檔案的同一個（站, 月份）是覆蓋不是相加**——
+官方逐年檔的結尾常常多掛下一年一月的幾天，相加會把那個月灌水（實測會多算約 0.2%）。
 沒有表頭的檔案（像 `站名,年月,進站,出站` 直接開始）會看內容猜欄位，不用先自己加標題列。
 逐日的資料會自動收斂成月統計。站名也會正規化：`臺`→`台`、去掉括號與結尾的「站」、
 去掉路線代碼前綴（板橋有兩組閘門，官方分成 `BL板橋` / `Y板橋`，會自動加總回同一站）。

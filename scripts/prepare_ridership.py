@@ -37,6 +37,8 @@ except ImportError:  # pragma: no cover - 只在缺套件時觸發
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 STATIONS_JSON = ROOT / "public" / "data" / "stations.json"
 
+DEFAULT_SOURCE = "臺北大眾捷運股份有限公司　各站進出量統計"
+
 IN_WORDS = ("進站", "進入", "入站", "entry", "entries", "in")
 OUT_WORDS = ("出站", "出口", "離站", "exit", "exits", "out")
 
@@ -307,7 +309,12 @@ def main() -> int:
     parser.add_argument("--layout", choices=["auto", "long", "wide", "wide_period_cols", "od"], default="auto")
     parser.add_argument("--since", help="只取這個月份（含）之後，格式 YYYY-MM")
     parser.add_argument("--until", help="只取這個月份（含）之前，格式 YYYY-MM")
-    parser.add_argument("--source", default="臺北大眾捷運股份有限公司　各站進出量統計", help="寫進 meta.source 的資料來源說明")
+    parser.add_argument("--source", default=DEFAULT_SOURCE, help="寫進 meta.source 的資料來源說明")
+    parser.add_argument(
+        "--merge",
+        action="store_true",
+        help="把結果併進既有的 --out（補新年度用，同一期以這次讀到的為準）",
+    )
     parser.add_argument("--inspect", action="store_true", help="只印出檔案結構，不做轉換")
     args = parser.parse_args()
 
@@ -326,22 +333,39 @@ def main() -> int:
     id_by_name = {s["name"]: s["id"] for s in stations}
     resolve = make_resolver(id_by_name)
 
-    bucket: dict[tuple[str, str, str], float] = defaultdict(float)
+    # 同一個檔案內的列會累加（逐日 → 月統計），但跨檔案的同一個（站, 月份）是覆蓋而不是相加：
+    # 官方逐年檔的結尾常常多掛下一年一月的幾天，相加會把那個月灌水。
+    bucket: dict[tuple[str, str, str], float] = {}
+    overlaps: set[tuple[str, str]] = set()
     for path in paths:
+        file_bucket: dict[tuple[str, str, str], float] = defaultdict(float)
         for sheet, frame in read_frames(path):
             frame = frame.dropna(how="all").dropna(axis=1, how="all")
             if frame.empty:
                 continue
             layout = args.layout if args.layout != "auto" else detect_layout(frame)
             if layout == "od":
-                written = parse_od(frame, bucket, resolve)
+                written = parse_od(frame, file_bucket, resolve)
             elif layout == "long":
-                written = parse_long(frame, bucket, resolve)
+                written = parse_long(frame, file_bucket, resolve)
             elif layout in ("wide", "wide_period_cols"):
-                written = parse_wide(frame, sheet, bucket, resolve)
+                written = parse_wide(frame, sheet, file_bucket, resolve)
             else:
                 written = 0
             print(f"{path.name} / {sheet}：排版 {layout}，讀進 {written} 個數值")
+
+        for key, value in file_bucket.items():
+            if key in bucket and bucket[key] != value:
+                overlaps.add((key[0], key[1]))
+            bucket[key] = value
+
+    if overlaps:
+        months = sorted({period for _, period in overlaps})
+        print(
+            f"\n注意：有 {len(overlaps)} 組（站, 月份）在多個檔案裡都出現（{'、'.join(months)}），"
+            "以較後面的檔案為準。",
+            file=sys.stderr,
+        )
 
     if not bucket:
         print("沒有讀到任何資料。先用 --inspect 看檔案結構，再用 --layout 指定排版。", file=sys.stderr)
@@ -372,26 +396,55 @@ def main() -> int:
         print("   請在 scripts/prepare_ridership.py 的 ALIASES 補對照，", file=sys.stderr)
         print("   或在 data/source 的站點資料補上座標後重跑 build_stations.py。", file=sys.stderr)
 
-    out_stations = []
+    # 站號 → {期間: [進, 出]}。--merge 的話先把既有的讀進來當底。
+    table: dict[str, dict[str, list[int]]] = {s["id"]: {} for s in stations}
+    old_meta: dict = {}
+    if args.merge and args.out.exists():
+        old = json.loads(args.out.read_text(encoding="utf-8"))
+        old_meta = old.get("meta", {})
+        for entry in old["stations"]:
+            if entry["id"] not in table:
+                continue
+            for i, period in enumerate(old["periods"]):
+                table[entry["id"]][period] = [entry["in"][i], entry["out"][i]]
+        print(f"\n合併既有的 {len(old['periods'])} 期（{old['periods'][0]} ~ {old['periods'][-1]}）")
+
+    # 這次讀到的期間覆蓋掉舊的同一期。
     for station in stations:
         key = station["name"]
-        series_in = [int(round(bucket.get((key, p, "in"), 0))) for p in periods]
-        series_out = [int(round(bucket.get((key, p, "out"), 0))) for p in periods]
-        out_stations.append({"id": station["id"], "in": series_in, "out": series_out})
+        for period in periods:
+            table[station["id"]][period] = [
+                int(round(bucket.get((key, period, "in"), 0))),
+                int(round(bucket.get((key, period, "out"), 0))),
+            ]
+
+    all_periods = sorted({p for series in table.values() for p in series})
+    out_stations = [
+        {
+            "id": station["id"],
+            "in": [table[station["id"]].get(p, [0, 0])[0] for p in all_periods],
+            "out": [table[station["id"]].get(p, [0, 0])[1] for p in all_periods],
+        }
+        for station in stations
+    ]
 
     covered = sum(1 for s in out_stations if any(s["in"]) or any(s["out"]))
+    files = [p.name for p in paths]
+    if args.merge:
+        files = sorted(set(old_meta.get("files", [])) | set(files))
     doc = {
         "meta": {
             "unit": "人次",
             "granularity": "month",
             "generated_by": "scripts/prepare_ridership.py",
-            "source": args.source,
+            "source": args.source if args.source != DEFAULT_SOURCE or not old_meta else old_meta["source"],
             "source_url": "https://www.metro.taipei/cp.aspx?n=FF31501BEBDD0136",
-            "files": [p.name for p in paths],
+            "files": files,
         },
-        "periods": periods,
+        "periods": all_periods,
         "stations": out_stations,
     }
+    periods = all_periods
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(doc, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     print(f"\n寫出 {covered}/{len(out_stations)} 站 × {len(periods)} 期（{periods[0]} ~ {periods[-1]}） → {args.out}")
