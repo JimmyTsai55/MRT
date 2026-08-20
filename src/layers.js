@@ -152,6 +152,8 @@ export function buildLayers({ data, state, maxRef, labelStations, onHover }) {
         characterSet: buildCharacterSet(stations),
         outlineWidth: 3,
         outlineColor: [4, 8, 16, 210],
+        // 關掉深度測試，標籤才不會被前面的高柱子切掉半個字。
+        parameters: { depthCompare: 'always' },
         updateTriggers: { getPosition: trigger, getText: trigger, getSize: trigger }
       })
     );

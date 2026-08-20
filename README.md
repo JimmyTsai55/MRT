@@ -9,9 +9,10 @@ npm install
 npm run dev          # → http://localhost:5173
 ```
 
-> **⚠️ 目前 repo 附的運量是「模擬示範資料」，不是官方數字。**
-> 站點座標是真的，運量是照著公開印象（台北車站最大、支線末端最小、2021 年三級警戒的塌陷）
-> 生出來的，只用來確認視覺與動畫效果。換上真實資料的步驟見下面〈用真實資料〉。
+> **repo 附的是真實運量：2018-01 ~ 2021-12，共 48 個月、118 站。**
+> 原始資料是臺北市資料大平臺（data.taipei）的各站分時進出量統計，
+> 這裡用的是 [HoMuChen/taipei-mrt-data](https://github.com/HoMuChen/taipei-mrt-data) 已經彙整成月統計的版本。
+> 2022 年之後要自己從官方站台補，做法見〈換上／更新資料〉。
 
 ## 畫面上有什麼
 
@@ -33,11 +34,12 @@ npm run dev          # → http://localhost:5173
 - 高度 `線性` vs `平方根`：台北車站比第二名大一倍以上，想看清楚中小型站就切平方根
 
 柱高的基準是**整段期間的全域最大值**，不是每月各自正規化，所以不同月份的柱子高度可以直接比較——
-疫情期間整片矮下去就是這樣看出來的。
+2021 年 5 月三級警戒之後整片矮下去（全網從 1.26 億人次/月掉到 2600 萬）就是這樣看出來的。
 
-## 用真實資料
+## 換上／更新資料
 
-官方檔案在 [北捷各站進出量統計](https://www.metro.taipei/cp.aspx?n=FF31501BEBDD0136)
+現成的資料只到 2021-12。要補上新的年度，官方檔案在
+[北捷各站進出量統計](https://www.metro.taipei/cp.aspx?n=FF31501BEBDD0136)
 （也有一份在 [data.taipei](https://data.taipei/dataset/detail?id=178ebf06-0451-4ac1-bbba-c255ca1fdac6)）。
 逐年一個 ODS，各年度排版不一定一致，所以先看檔案長相再轉：
 
@@ -47,9 +49,28 @@ pip install -r requirements.txt
 # 1. 先看官方檔案的結構與程式判定的排版
 python3 scripts/prepare_ridership.py --inspect data/raw/各站進出量統計.ods
 
-# 2. 轉成前端要的格式（可一次吃多個年度）
+# 2. 轉成前端要的格式（可一次吃多個年度，會自動合併）
 python3 scripts/prepare_ridership.py data/raw/*.ods
+
+# 常用選項
+#   --since 2018-01 --until 2024-12   只取這段期間（官方檔頭尾常有不完整的殘月）
+#   --layout wide                     自動判斷錯的時候手動指定
+#   --source "..."                    寫進 meta.source，會顯示在左上角
 ```
+
+repo 現在這份是這樣來的（要重跑或驗證的話）：
+
+```bash
+mkdir -p data/raw
+for y in 2018 2019 2020 2021; do
+  curl -sL -o data/raw/$y.csv \
+    https://raw.githubusercontent.com/HoMuChen/taipei-mrt-data/master/month/csv/$y.csv
+done
+python3 scripts/prepare_ridership.py data/raw/*.csv --until 2021-12
+```
+
+（`--until 2021-12` 是因為那份 2021 檔案的尾巴多了一小截不完整的 2022-01，
+程式也會自己警告總量異常偏低的月份。）
 
 支援三種常見排版，判斷錯了用 `--layout` 指定：
 
@@ -59,9 +80,13 @@ python3 scripts/prepare_ridership.py data/raw/*.ods
 | `wide` | 第一欄年月，其餘每欄一站，另有「類別」欄或不同工作表區分進出 |
 | `od` | 起訖對：日期／時段／進站／出站／人次，程式會分別加總成各站的進出量 |
 
-站名會做正規化（`臺`→`台`、去掉括號與結尾的「站」、幾個常見別名）。
+沒有表頭的檔案（像 `站名,年月,進站,出站` 直接開始）會看內容猜欄位，不用先自己加標題列。
+逐日的資料會自動收斂成月統計。站名也會正規化：`臺`→`台`、去掉括號與結尾的「站」、
+去掉路線代碼前綴（板橋有兩組閘門，官方分成 `BL板橋` / `Y板橋`，會自動加總回同一站）。
 對不到座標的站會在 stderr 列出來，補進 `scripts/prepare_ridership.py` 的 `ALIASES` 就好。
-轉好之後前端會自動改用真實資料，左上角的黃色警告也會換成資料來源說明。
+
+如果只是想看動畫效果、不想處理資料，`python3 scripts/generate_demo_ridership.py`
+會產生一份 2019–2025 的模擬資料（左上角會標成黃色警告，說明那不是官方數字）。
 
 解析邏輯有煙霧測試（自己造假檔跑三種排版）：
 
@@ -82,7 +107,7 @@ src/
 public/data/
   stations.json                118 個實體車站（轉乘站已合併）
   lines.json                   六條路線的折線座標（含支線）
-  ridership.json               每站每月進出人次
+  ridership.json               每站每月進出人次（目前是 2018-01 ~ 2021-12 的真實資料）
 scripts/
   build_stations.py            原始站點 GeoJSON → stations.json / lines.json
   generate_demo_ridership.py   產生模擬示範資料
@@ -96,7 +121,7 @@ data/source/                   原始站點資料（進版控管，方便重跑�
 
 ```jsonc
 {
-  "meta": { "synthetic": true, "unit": "人次", "granularity": "month" },
+  "meta": { "synthetic": false, "unit": "人次", "granularity": "month" },
   "periods": ["2019-01", "2019-02", "..."],
   "stations": [{ "id": "R10", "in": [1234, 1111], "out": [1300, 1180] }]
 }
@@ -135,6 +160,7 @@ node scripts/bundle_singlefile.mjs   # → dist/standalone.html（單檔，含�
   官方統計表若有這站，轉檔時會在 stderr 提醒對不到；補上座標重跑 `build_stations.py` 即可。
 - 底圖（CARTO 的 dark-matter／positron）需要連網。抓不到時會自動退回純色背景，
   柱狀圖與路線照樣可以看，也可以直接在底圖切成「無」。
+- 現成資料只到 2021-12。2022 年之後要自己從官方站台下載補上（見上面）。
 - 目前只做到「各站進出量」。要做 OD 流向（哪裡到哪裡）得換 `ArcLayer` 或 `TripsLayer`，
   資料源要改用分時 OD 表。
 
@@ -142,5 +168,7 @@ node scripts/bundle_singlefile.mjs   # → dist/standalone.html（單檔，含�
 
 - 站點座標：[repeat/northern-taiwan-metro-stations](https://github.com/repeat/northern-taiwan-metro-stations)
   （原始資料來自臺北市資料大平臺 data.taipei）
-- 運量統計（真實資料的來源）：[臺北大眾捷運股份有限公司　各站進出量統計](https://www.metro.taipei/cp.aspx?n=FF31501BEBDD0136)
+- 運量統計：[臺北市資料大平臺　臺北捷運各站分時進出量統計](https://data.taipei/dataset/detail?id=178ebf06-0451-4ac1-bbba-c255ca1fdac6)，
+  月統計彙整版取自 [HoMuChen/taipei-mrt-data](https://github.com/HoMuChen/taipei-mrt-data)；
+  最新年度請至 [北捷各站進出量統計](https://www.metro.taipei/cp.aspx?n=FF31501BEBDD0136)
 - 路線識別色：北捷官方色票

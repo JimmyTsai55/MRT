@@ -57,9 +57,16 @@ def name_candidates(raw: str) -> list[str]:
     stripped = re.sub(r"[（(].*?[)）]$", "", base)
 
     candidates = [ALIASES.get(base), ALIASES.get(text), text, base, stripped]
+    # 有些統計表會在站名前面掛路線代碼（板橋有兩組閘門，會分成「BL板橋」「Y板橋」），
+    # 去掉代碼才對得上，兩筆也才會加總到同一個實體車站。
+    unprefixed = re.sub(r"^[A-Za-z]{1,2}(?=[^\x00-\x7F])", "", stripped)
+    if unprefixed != stripped:
+        candidates.append(unprefixed)
+        candidates.append(ALIASES.get(unprefixed))
     # 「淡水站」→「淡水」，但別把「台北車站」砍成「台北車」，所以放在最後才試。
-    if stripped.endswith("站") and len(stripped) > 2:
-        candidates.append(stripped[:-1])
+    for candidate in (stripped, unprefixed):
+        if candidate.endswith("站") and len(candidate) > 2:
+            candidates.append(candidate[:-1])
     return [c for c in dict.fromkeys(candidates) if c]
 
 
@@ -96,19 +103,80 @@ def normalize_period(raw) -> str | None:
     return f"{year}-{month:02d}"
 
 
-def read_frames(path: pathlib.Path) -> list[tuple[str, pd.DataFrame]]:
-    """讀進檔案裡的每一張工作表（CSV 就只有一張）。"""
+HEADER_HINTS = ("站", "日期", "年月", "月份", "人次", "人數", "時段", "類別", "date", "station", "count")
+
+
+def looks_like_header(columns) -> bool:
+    joined = "".join(str(c) for c in columns).lower()
+    return any(hint in joined for hint in HEADER_HINTS)
+
+
+def sniff_columns(frame: pd.DataFrame) -> list[str]:
+    """沒有表頭的檔案（例如「站名,年月,進站,出站」直接開始）就看內容猜欄位。"""
+    kinds = []
+    for col in frame.columns:
+        values = frame[col].dropna().head(50).tolist()
+        if values and sum(1 for v in values if normalize_period(v)) >= len(values) * 0.8:
+            kinds.append("period")
+        elif pd.api.types.is_numeric_dtype(frame[col]):
+            kinds.append("number")
+        else:
+            kinds.append("text")
+
+    # 兩個文字欄通常代表這是起訖對表（進站站、出站站），只有一個就是站名。
+    od_shaped = kinds.count("text") >= 2
+    names, texts, numbers = [], 0, 0
+    for kind in kinds:
+        if kind == "period":
+            names.append("年月")
+        elif kind == "text":
+            texts += 1
+            if od_shaped:
+                names.append({1: "進站", 2: "出站"}.get(texts, f"文字{texts}"))
+            else:
+                names.append("站名" if texts == 1 else f"文字{texts}")
+        else:
+            numbers += 1
+            if od_shaped:
+                names.append("人次" if numbers == 1 else f"數值{numbers}")
+            else:
+                names.append({1: "進站人次", 2: "出站人次"}.get(numbers, f"數值{numbers}"))
+    return names
+
+
+def _read(path: pathlib.Path, header) -> list[tuple[str, pd.DataFrame]]:
     suffix = path.suffix.lower()
     if suffix in (".csv", ".txt"):
         for encoding in ("utf-8-sig", "big5", "cp950"):
             try:
-                return [(path.name, pd.read_csv(path, encoding=encoding))]
+                return [(path.name, pd.read_csv(path, encoding=encoding, header=header))]
             except UnicodeDecodeError:
                 continue
         raise SystemExit(f"無法判斷 {path.name} 的編碼，請先轉成 UTF-8")
     engine = "odf" if suffix == ".ods" else None
-    sheets = pd.read_excel(path, sheet_name=None, engine=engine)
+    # read_excel 不吃 "infer"，第一列當表頭是 header=0。
+    sheets = pd.read_excel(
+        path, sheet_name=None, engine=engine, header=0 if header == "infer" else header
+    )
     return list(sheets.items())
+
+
+def read_frames(path: pathlib.Path) -> list[tuple[str, pd.DataFrame]]:
+    """讀進檔案裡的每一張工作表（CSV 就只有一張），沒有表頭的話補上欄位名。"""
+    frames = _read(path, header="infer")
+    if all(looks_like_header(frame.columns) for _, frame in frames):
+        return frames
+
+    headerless = _read(path, header=None)
+    out = []
+    for (name, frame), (_, raw) in zip(frames, headerless):
+        if looks_like_header(frame.columns):
+            out.append((name, frame))
+        else:
+            raw = raw.copy()
+            raw.columns = sniff_columns(raw)
+            out.append((name, raw))
+    return out
 
 
 def detect_layout(frame: pd.DataFrame) -> str:
@@ -237,6 +305,9 @@ def main() -> int:
     parser.add_argument("files", nargs="+", type=pathlib.Path, help="官方統計檔（.ods/.xlsx/.csv，可多個）")
     parser.add_argument("--out", type=pathlib.Path, default=ROOT / "public" / "data" / "ridership.json")
     parser.add_argument("--layout", choices=["auto", "long", "wide", "wide_period_cols", "od"], default="auto")
+    parser.add_argument("--since", help="只取這個月份（含）之後，格式 YYYY-MM")
+    parser.add_argument("--until", help="只取這個月份（含）之前，格式 YYYY-MM")
+    parser.add_argument("--source", default="臺北大眾捷運股份有限公司　各站進出量統計", help="寫進 meta.source 的資料來源說明")
     parser.add_argument("--inspect", action="store_true", help="只印出檔案結構，不做轉換")
     args = parser.parse_args()
 
@@ -277,6 +348,22 @@ def main() -> int:
         return 1
 
     periods = sorted({period for _, period, _ in bucket})
+    if args.since:
+        periods = [p for p in periods if p >= args.since]
+    if args.until:
+        periods = [p for p in periods if p <= args.until]
+    if not periods:
+        print("--since/--until 把資料全部濾掉了。", file=sys.stderr)
+        return 1
+
+    # 官方檔案的頭尾常常是只有幾天的殘月，總量明顯偏低就提醒一下。
+    totals = {p: sum(v for (_, period, _), v in bucket.items() if period == p) for p in periods}
+    median = sorted(totals.values())[len(totals) // 2]
+    partial = [p for p in periods if totals[p] < median * 0.1]
+    if partial:
+        print(f"\n⚠️ 這幾期的總量明顯偏低，可能是不完整的月份：{'、'.join(partial)}", file=sys.stderr)
+        print("   要拿掉的話用 --since / --until 指定範圍。", file=sys.stderr)
+
     names = sorted({name for name, _, _ in bucket})
     unmatched = [n for n in names if n not in id_by_name]
     if unmatched:
@@ -299,7 +386,7 @@ def main() -> int:
             "unit": "人次",
             "granularity": "month",
             "generated_by": "scripts/prepare_ridership.py",
-            "source": "臺北大眾捷運股份有限公司　各站進出量統計",
+            "source": args.source,
             "source_url": "https://www.metro.taipei/cp.aspx?n=FF31501BEBDD0136",
             "files": [p.name for p in paths],
         },

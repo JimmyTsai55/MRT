@@ -15,8 +15,8 @@ export function blankStyle(color) {
 }
 
 export const INITIAL_VIEW = {
-  center: [121.522, 25.012],
-  zoom: 11.55,
+  center: [121.524, 24.999],
+  zoom: 11.42,
   pitch: 52,
   bearing: -16
 };
