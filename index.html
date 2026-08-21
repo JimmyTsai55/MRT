@@ -23,7 +23,7 @@
     <!-- 左上：標題 -->
     <header class="panel panel-title">
       <h1>台北捷運 · 各站進出人次</h1>
-      <p class="subtitle" id="subtitle">每站兩根柱：<b class="swatch-in">進站</b> ／ <b class="swatch-out">出站</b>，高度即人次</p>
+      <p class="subtitle" id="subtitle">不用真實地理，改用官方路網圖那種等距示意座標，站與站不再擠在一起</p>
       <p id="data-badge" class="badge">資料載入中</p>
     </header>
 
@@ -32,9 +32,9 @@
       <div class="control-row">
         <label class="control-label">呈現</label>
         <div class="segmented" id="style">
-          <button data-value="column" class="active">柱狀</button>
+          <button data-value="column">柱狀</button>
           <button data-value="wall">剖面牆</button>
-          <button data-value="schematic">路網圖</button>
+          <button data-value="schematic" class="active">路網圖</button>
         </div>
       </div>
       <div class="control-row">
@@ -60,9 +60,9 @@
       <div class="control-row">
         <label class="control-label">底圖</label>
         <div class="segmented" id="basemap">
-          <button data-value="dark" class="active">暗色</button>
+          <button data-value="dark">暗色</button>
           <button data-value="light">亮色</button>
-          <button data-value="none">無</button>
+          <button data-value="none" class="active">無</button>
         </div>
       </div>
       <div class="control-row control-row-checks">

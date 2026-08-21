@@ -13,7 +13,8 @@ const LABEL_COUNT = 7;
 const MONTHS_PER_SECOND = 2; // 1× 播放速度
 
 const state = {
-  style: 'column',
+  // 預設就是路網圖：市中心的站在真實地圖上會擠成一團，示意座標才看得清楚每一站。
+  style: 'schematic',
   frame: 0,
   playing: true,
   speed: 1,
@@ -22,7 +23,8 @@ const state = {
   elevScale: 1,
   showLabels: true,
   showRoutes: true,
-  basemap: 'dark'
+  // 路網圖底下沒有地理意義，所以預設不放底圖。
+  basemap: 'none'
 };
 
 const dom = {
@@ -112,6 +114,12 @@ async function start() {
   drawSpark(dom.spark, data.networkTotals, data.periods);
   updateRankBoard = createRankBoard(dom.rankList, data.stations);
   bindControls();
+
+  // 讓畫面與預設的 state 對齊（呈現方式、底圖、副標、相機）。
+  setSegmented('style', state.style);
+  setSegmented('basemap', state.basemap);
+  dom.subtitle.innerHTML = SUBTITLES[state.style];
+  if (state.style === 'schematic' && data.hasSchematic) applySchematicCamera(0);
 
   dom.loading.classList.add('done');
   setTimeout(() => dom.loading.remove(), 500);
@@ -209,6 +217,25 @@ function pickLabels(ranked, maxRef) {
   return chosen;
 }
 
+/**
+ * 示意圖的相機：依實際範圍框選並轉正。
+ * cameraForBounds 是以 pitch 0 計算的，所以先取水平視角的相機、再補上傾角與一點縮放，
+ * 否則加了傾角之後整張圖會縮成畫面中間一小坨。
+ */
+function applySchematicCamera(duration = 0) {
+  const camera = map.cameraForBounds(data.schematicBounds, {
+    padding: { top: 70, bottom: 120, left: 80, right: 210 },
+    bearing: 0
+  });
+  map.easeTo({
+    ...(camera || SCHEMATIC_VIEW),
+    zoom: (camera?.zoom ?? SCHEMATIC_VIEW.zoom) + 0.3,
+    pitch: SCHEMATIC_VIEW.pitch,
+    bearing: 0,
+    duration
+  });
+}
+
 function paintTooltip(ranked) {
   if (!hoverInfo) {
     dom.tooltip.classList.add('hidden');
@@ -251,23 +278,11 @@ function bindControls() {
     state.style = value;
     dom.subtitle.innerHTML = SUBTITLES[value];
     if (value === 'schematic') {
-      // 示意座標底下沒有地理意義，底圖要關掉，並轉正（示意圖是畫在正交平面上的）。
+      // 示意座標底下沒有地理意義，底圖要關掉。
       state.basemap = 'none';
       setSegmented('basemap', 'none');
       map.setStyle(blankStyle('#05070d'));
-      // 依示意圖的實際範圍框選。cameraForBounds 是以 pitch 0 計算的，
-      // 所以先取水平視角的相機、再補上傾角與一點縮放，畫面才不會縮成一小坨。
-      const camera = map.cameraForBounds(data.schematicBounds, {
-        padding: { top: 70, bottom: 120, left: 80, right: 210 },
-        bearing: 0
-      });
-      map.easeTo({
-        ...(camera || SCHEMATIC_VIEW),
-        zoom: (camera?.zoom ?? SCHEMATIC_VIEW.zoom) + 0.3,
-        pitch: SCHEMATIC_VIEW.pitch,
-        bearing: 0,
-        duration: 800
-      });
+      applySchematicCamera(800);
       if (state.scaleMode === 'sqrt') {
         state.scaleMode = 'linear';
         setSegmented('scaleMode', 'linear');
@@ -313,7 +328,8 @@ function bindControls() {
     state.speed = Number(event.target.value);
   });
   document.getElementById('reset').addEventListener('click', () => {
-    map.easeTo({ ...INITIAL_VIEW, duration: 900 });
+    if (state.style === 'schematic') applySchematicCamera(900);
+    else map.easeTo({ ...INITIAL_VIEW, duration: 900 });
   });
   document.getElementById('rank-toggle').addEventListener('click', (event) => {
     const collapsed = dom.rankPanel.classList.toggle('collapsed');
