@@ -73,6 +73,11 @@ html, body {
 }
 .badge a { color: inherit; }
 
+.build-mark {
+  margin: 6px 0 0; font-size: 10.5px; letter-spacing: 0.06em;
+  color: rgba(141, 155, 179, 0.55); font-variant-numeric: tabular-nums;
+}
+
 /* ---------- 控制面板 ---------- */
 .panel-controls { left: 16px; bottom: 130px; width: 330px; padding: 13px 17px 15px; }
 .control-row { display: flex; align-items: center; gap: 10px; margin: 9px 0; }

@@ -111,6 +111,17 @@ async function start() {
     data.periods[data.periods.length - 1]
   }　共 ${data.meta.stationCount} 站`;
 
+  // 版本標記：確認畫面跑的是哪一版（滑鼠移過去看建置時間）。
+  const build = typeof __BUILD_INFO__ === 'undefined' ? null : __BUILD_INFO__;
+  if (build) {
+    const mark = document.createElement('p');
+    mark.className = 'build-mark';
+    mark.textContent = `build ${build.commit}`;
+    mark.title = `建置時間 ${build.builtAt}`;
+    dom.badge.after(mark);
+    console.info(`[台北捷運 3D] build ${build.commit} · ${build.builtAt}`);
+  }
+
   drawSpark(dom.spark, data.networkTotals, data.periods);
   updateRankBoard = createRankBoard(dom.rankList, data.stations);
   bindControls();

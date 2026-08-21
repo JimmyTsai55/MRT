@@ -12,6 +12,9 @@
 預設進來是路網圖；要看真實地理位置就把「呈現」切到柱狀或剖面牆，底圖也會跟著能用。
 預設值在 `src/main.js` 的 `state.style`。
 
+左上角資料來源下面那行 `build xxxxxxx` 是建置時的 git commit（滑鼠移過去看建置時間），
+用來確認畫面上跑的到底是不是剛 pull 下來的版本——`npm run dev` 開頭印的 `VITE v8.x` 是打包工具的版本，跟這個無關。
+
 ```
 npm install
 npm run dev          # → http://localhost:5173
