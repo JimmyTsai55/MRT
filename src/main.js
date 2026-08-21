@@ -8,6 +8,7 @@ import { BASEMAPS, INITIAL_VIEW, SCHEMATIC_VIEW, blankStyle } from './basemap.js
 import { loadAll, formatCount, formatPeriod, positionOf } from './data.js';
 import { buildLayers, elevationOf } from './layers.js';
 import { createRankBoard, drawSpark, rankStations, renderTooltip } from './ui.js';
+import { createFlow } from './flow.js';
 
 const LABEL_COUNT = 7;
 const MONTHS_PER_SECOND = 2; // 1× 播放速度
@@ -45,6 +46,9 @@ const dom = {
 const SUBTITLES = {
   column: '每站兩根柱：<b class="swatch-in">進站</b> ／ <b class="swatch-out">出站</b>，高度即人次',
   wall: '沿路線拉起的剖面牆，牆高即當月人次，顏色為路線色',
+  flow:
+    '粒子＝人潮進出車站：<b class="swatch-in">向內聚攏</b>是進站、<b class="swatch-out">向外擴散</b>是出站。' +
+    '<br>不是站與站之間的流向——那需要 OD 資料，這份統計沒有。',
   schematic: '不用真實地理，改用官方路網圖那種等距示意座標，站與站不再擠在一起'
 };
 
@@ -86,6 +90,7 @@ const overlay = new MapboxOverlay({
 map.addControl(overlay);
 
 let data = null;
+let flow = null;
 let updateRankBoard = null;
 let hoverInfo = null;
 let lastRankPaint = 0;
@@ -123,6 +128,7 @@ async function start() {
   }
 
   drawSpark(dom.spark, data.networkTotals, data.periods);
+  flow = createFlow(data);
   updateRankBoard = createRankBoard(dom.rankList, data.stations);
   bindControls();
 
@@ -130,7 +136,9 @@ async function start() {
   setSegmented('style', state.style);
   setSegmented('basemap', state.basemap);
   dom.subtitle.innerHTML = SUBTITLES[state.style];
-  if (state.style === 'schematic' && data.hasSchematic) applySchematicCamera(0);
+  if ((state.style === 'schematic' || state.style === 'flow') && data.hasSchematic) {
+    applySchematicCamera(0);
+  }
 
   dom.loading.classList.add('done');
   setTimeout(() => dom.loading.remove(), 500);
@@ -151,6 +159,11 @@ function tick(now) {
     dom.scrub.value = String(state.frame);
   }
 
+  if (state.style === 'flow') {
+    const maxRef = state.metric === 'both' ? data.maxima.sum : data.maxima[state.metric];
+    flow.update(delta, state, now, maxRef);
+  }
+
   render(now);
   requestAnimationFrame(tick);
 }
@@ -169,6 +182,7 @@ function render(now = performance.now()) {
       state,
       maxRef,
       labelStations,
+      flow,
       onHover: (info) => {
         hoverInfo = info?.object ? info : null;
         paintTooltip(ranked);
@@ -288,7 +302,7 @@ function bindControls() {
   segmented('style', (value) => {
     state.style = value;
     dom.subtitle.innerHTML = SUBTITLES[value];
-    if (value === 'schematic') {
+    if (value === 'schematic' || value === 'flow') {
       // 示意座標底下沒有地理意義，底圖要關掉。
       state.basemap = 'none';
       setSegmented('basemap', 'none');
@@ -339,7 +353,7 @@ function bindControls() {
     state.speed = Number(event.target.value);
   });
   document.getElementById('reset').addEventListener('click', () => {
-    if (state.style === 'schematic') applySchematicCamera(900);
+    if (state.style === 'schematic' || state.style === 'flow') applySchematicCamera(900);
     else map.easeTo({ ...INITIAL_VIEW, duration: 900 });
   });
   document.getElementById('rank-toggle').addEventListener('click', (event) => {

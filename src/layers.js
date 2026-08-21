@@ -2,8 +2,16 @@
 //   column 柱狀 — 每站兩根柱（進站／出站）
 //   wall   剖面牆 — 沿著路線拉一道垂直的牆，牆的上緣就是運量剖面
 
-import { ColumnLayer, PathLayer, ScatterplotLayer, SolidPolygonLayer, TextLayer } from '@deck.gl/layers';
+import {
+  ColumnLayer,
+  LineLayer,
+  PathLayer,
+  ScatterplotLayer,
+  SolidPolygonLayer,
+  TextLayer
+} from '@deck.gl/layers';
 import { stationValue, valueAt, formatCount, positionOf } from './data.js';
+import { flowRadius } from './flow.js';
 
 export const COLOR_IN = [56, 189, 248];
 export const COLOR_OUT = [251, 146, 60];
@@ -134,7 +142,7 @@ function ridgePaths(data, state, maxRef) {
   return out;
 }
 
-export function buildLayers({ data, state, maxRef, labelStations, onHover }) {
+export function buildLayers({ data, state, maxRef, labelStations, onHover, flow }) {
   const { stations, lines } = data;
   const trigger = [state.frame, state.metric, state.scaleMode];
   const layers = [];
@@ -147,13 +155,16 @@ export function buildLayers({ data, state, maxRef, labelStations, onHover }) {
         pickable: false,
         widthUnits: 'meters',
         // 示意圖用官方路網圖那種粗線，地理模式維持細線才不會蓋住站點。
-        getWidth: state.style === 'schematic' ? 210 : 55,
-        widthMinPixels: state.style === 'schematic' ? 4 : 1.6,
-        widthMaxPixels: state.style === 'schematic' ? 26 : 7,
+        getWidth: state.style === 'schematic' || state.style === 'flow' ? 210 : 55,
+        widthMinPixels: state.style === 'schematic' || state.style === 'flow' ? 4 : 1.6,
+        widthMaxPixels: state.style === 'schematic' || state.style === 'flow' ? 26 : 7,
         capRounded: true,
         jointRounded: true,
         getPath: (d) => d.path,
-        getColor: (d) => [...d.color, state.style === 'schematic' ? 255 : 205],
+        getColor: (d) => [
+          ...d.color,
+          state.style === 'flow' ? 70 : state.style === 'schematic' ? 255 : 205
+        ],
         updateTriggers: { getPath: state.style, getWidth: state.style }
       })
     );
@@ -183,9 +194,11 @@ export function buildLayers({ data, state, maxRef, labelStations, onHover }) {
   );
 
   // 站點底盤：運量為零（例如環狀線通車前）的站也還看得到位置。
-  layers.push(
-    new ScatterplotLayer({
-      id: 'station-dots',
+  // 人流模式有自己的站點光核，這層就不畫了。
+  if (state.style !== 'flow') {
+    layers.push(
+      new ScatterplotLayer({
+        id: 'station-dots',
       data: stations,
       pickable: true,
       radiusUnits: 'meters',
@@ -201,10 +214,15 @@ export function buildLayers({ data, state, maxRef, labelStations, onHover }) {
       getLineWidth: 70,
       lineWidthMinPixels: 1.5,
       getLineColor: (d) => [...d.lineColor, 255],
-      updateTriggers: { getPosition: state.style, getRadius: state.style, getFillColor: state.style },
-      onHover
-    })
-  );
+        updateTriggers: {
+          getPosition: state.style,
+          getRadius: state.style,
+          getFillColor: state.style
+        },
+        onHover
+      })
+    );
+  }
 
   const columnBase = {
     data: stations,
@@ -224,7 +242,38 @@ export function buildLayers({ data, state, maxRef, labelStations, onHover }) {
     onHover
   };
 
-  if (state.style === 'wall') {
+  if (state.style === 'flow') {
+    // 站點本身的光暈：運量越大暈得越開，當作粒子的「源頭」。
+    layers.push(
+      new ScatterplotLayer({
+        id: 'flow-core',
+        data: stations,
+        pickable: true,
+        radiusUnits: 'meters',
+        getPosition: (d) => positionOf(d, state),
+        getRadius: (d) => flowRadius(d, state, maxRef) * 0.13,
+        getFillColor: (d) => [...d.lineColor, 190],
+        stroked: false,
+        parameters: ADDITIVE,
+        updateTriggers: { getRadius: trigger, getPosition: state.style },
+        onHover
+      })
+    );
+
+    if (flow && flow.count) {
+      layers.push(
+        new LineLayer({
+          id: 'flow-particles',
+          data: { length: flow.count, attributes: flow.attributes },
+          positionFormat: 'XY',
+          pickable: false,
+          widthUnits: 'pixels',
+          getWidth: 1.6,
+          parameters: ADDITIVE
+        })
+      );
+    }
+  } else if (state.style === 'wall') {
     const trigger3d = [state.frame, state.metric, state.scaleMode, state.elevScale];
     layers.push(
       new SolidPolygonLayer({

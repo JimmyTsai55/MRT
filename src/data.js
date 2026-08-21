@@ -104,8 +104,10 @@ function boundsOf(positions) {
 }
 
 /** 目前呈現方式下，一個站要畫在哪裡。 */
+const SCHEMATIC_STYLES = new Set(['schematic', 'flow']);
+
 export function positionOf(station, state) {
-  return state.style === 'schematic' ? station.schematicPosition : station.position;
+  return SCHEMATIC_STYLES.has(state.style) ? station.schematicPosition : station.position;
 }
 
 /** 兩個月之間做線性內插，讓柱子連續長高／變矮而不是一格一格跳。 */
