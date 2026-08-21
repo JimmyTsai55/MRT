@@ -84,6 +84,23 @@ python3 scripts/prepare_ridership.py data/raw/*.ods
 python3 scripts/prepare_ridership.py data/raw/2022.ods data/raw/2023.ods --merge
 ```
 
+### 直接從 data.taipei 的 API 抓
+
+資料集頁面「詳細資料」那一區有 `resource_id`，用它就能分頁抓（公開 API，不用金鑰，
+一次最多 1000 筆）：
+
+```bash
+# 先看欄位長怎樣
+python3 scripts/fetch_data_taipei.py <resource_id> --peek
+
+# 整份抓下來，再丟給轉檔程式
+python3 scripts/fetch_data_taipei.py <resource_id> --out data/raw/od.csv
+python3 scripts/prepare_ridership.py data/raw/od.csv --merge
+```
+
+大資料集建議先 `--max-records 50000` 試跑。分頁邏輯有測試
+（`python3 scripts/test_fetch_data_taipei.py`，在 localhost 起假伺服器測，不會去打人家的 API）。
+
 repo 現在這份是這樣來的（要重跑或驗證的話）：
 
 ```bash
@@ -140,6 +157,8 @@ scripts/
   build_schematic.py           真實座標 → 路網圖示意座標 schematic.json
   prepare_ridership.py         官方 ODS/CSV → ridership.json
   test_prepare_ridership.py    上面那支的煙霧測試
+  fetch_data_taipei.py         從 data.taipei 開放 API 分頁抓資料集 → CSV
+  test_fetch_data_taipei.py    上面那支的分頁測試（用本機假伺服器）
   bundle_singlefile.mjs        打包成單一 HTML（見下）
 data/source/                   原始站點資料（進版控管，方便重跑）
 ```
