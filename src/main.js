@@ -47,7 +47,7 @@ const SUBTITLES = {
   column: '每站兩根柱：<b class="swatch-in">進站</b> ／ <b class="swatch-out">出站</b>，高度即人次',
   wall: '沿路線拉起的剖面牆，牆高即當月人次，顏色為路線色',
   flow:
-    '粒子＝人潮進出車站：<b class="swatch-in">向內聚攏</b>是進站、<b class="swatch-out">向外擴散</b>是出站。' +
+    '北捷多是地下站：<b class="swatch-in">藍色往下沉</b>是進站、<b class="swatch-out">橘色往上湧</b>是出站。' +
     '<br>不是站與站之間的流向——那需要 OD 資料，這份統計沒有。',
   schematic: '不用真實地理，改用官方路網圖那種等距示意座標，站與站不再擠在一起'
 };

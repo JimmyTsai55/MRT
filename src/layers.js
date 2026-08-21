@@ -11,7 +11,7 @@ import {
   TextLayer
 } from '@deck.gl/layers';
 import { stationValue, valueAt, formatCount, positionOf } from './data.js';
-import { flowRadius } from './flow.js';
+import { flowColumn } from './flow.js';
 
 export const COLOR_IN = [56, 189, 248];
 export const COLOR_OUT = [251, 146, 60];
@@ -251,8 +251,8 @@ export function buildLayers({ data, state, maxRef, labelStations, onHover, flow 
         pickable: true,
         radiusUnits: 'meters',
         getPosition: (d) => positionOf(d, state),
-        getRadius: (d) => flowRadius(d, state, maxRef) * 0.13,
-        getFillColor: (d) => [...d.lineColor, 190],
+        getRadius: (d) => flowColumn(d, state, maxRef).radius * 1.6,
+        getFillColor: (d) => [...d.lineColor, 150],
         stroked: false,
         parameters: ADDITIVE,
         updateTriggers: { getRadius: trigger, getPosition: state.style },
@@ -265,7 +265,7 @@ export function buildLayers({ data, state, maxRef, labelStations, onHover, flow 
         new LineLayer({
           id: 'flow-particles',
           data: { length: flow.count, attributes: flow.attributes },
-          positionFormat: 'XY',
+          positionFormat: 'XYZ',
           pickable: false,
           widthUnits: 'pixels',
           getWidth: 1.6,

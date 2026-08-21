@@ -1,19 +1,23 @@
-// 人流模式的粒子系統。
+// 人流模式的粒子系統：垂直的人流。
 //
-// 語意：進站人次＝從街上走進車站的人，所以粒子「向站點聚攏」；
-//       出站人次＝從車站走到街上的人，所以粒子「從站點向外擴散」。
-// 這兩者都只用該站自己的數字，沒有牽涉到站與站之間的流向——
-// 那需要 OD 資料，我們手上的統計沒有，所以這裡不畫任何站間的流動。
+// 北捷絕大多數是地下站，所以語意直接照字面走——
+//   進站人次＝人從地面沉進車站 → 藍色粒子由上往下落
+//   出站人次＝人從車站湧回地面 → 橘色粒子由下往上升
+// 兩者都只用該站自己的數字，沒有牽涉到站與站之間的流向
+//（那需要 OD 資料，我們手上的統計沒有）。
+//
+// 幾何上刻意選垂直而不是放射狀：360° 均勻擴散不管怎麼調參數都會像煙火。
 //
 // 粒子總數對應「全期間最大的全網運量」，不是每個月各自正規化，
 // 所以疫情期間整張圖的粒子會明顯變稀疏。
 
 import { stationValue, valueAt, positionOf } from './data.js';
 
-const TOTAL = 12000; // 粒子上限。太多會糊成噪點，看不出一條一條的軌跡
+const TOTAL = 14000; // 粒子上限
 const REALLOC_MS = 200; // 重新分配各站粒子數的間隔
-const STREAK = 0.3; // 拖尾長度（佔該站流場半徑的比例）
-const SWIRL = 1.0; // 旋進的角度（弧度）。純徑向看起來像煙火，要帶著旋才像人流
+const STREAK = 0.13; // 拖尾長度（佔光柱高度的比例）。太短會變成彩色紙屑
+const DRIFT = 0.75; // 上升／下沉過程中繞著中軸旋轉的圈量，像煙一樣
+const SPLIT = 1.15; // 進站柱與出站柱左右分開的距離（柱半徑的倍數）
 
 const COLOR_IN = [56, 189, 248];
 const COLOR_OUT = [251, 146, 60];
@@ -30,12 +34,13 @@ export function createFlow(data) {
   for (let i = 0; i < TOTAL; i++) {
     angle[i] = Math.random() * Math.PI * 2;
     phase[i] = Math.random();
-    speed[i] = 0.28 + Math.random() * 0.34;
-    spread[i] = 0.62 + Math.random() * 0.62;
+    speed[i] = 0.3 + Math.random() * 0.4;
+    // 開根號讓粒子在圓面上均勻分布，不會全擠在中軸。
+    spread[i] = Math.sqrt(Math.random());
   }
 
-  const source = new Float32Array(TOTAL * 2);
-  const target = new Float32Array(TOTAL * 2);
+  const source = new Float32Array(TOTAL * 3);
+  const target = new Float32Array(TOTAL * 3);
   const colors = new Uint8Array(TOTAL * 4);
 
   // 全期間最大的全網運量，當作粒子數的基準。
@@ -74,7 +79,7 @@ export function createFlow(data) {
             outward[cursor] = dir;
             phase[cursor] = Math.random();
             angle[cursor] = Math.random() * Math.PI * 2;
-            spread[cursor] = 0.62 + Math.random() * 0.62;
+            spread[cursor] = Math.sqrt(Math.random());
           }
         }
       }
@@ -100,34 +105,37 @@ export function createFlow(data) {
       if (phase[i] >= 1) phase[i] -= 1;
 
       const t = phase[i];
-      // 向外擴散：0 → 1；向內聚攏：1 → 0。
+      // 上升：0 → 1（從地底湧出）；下沉：1 → 0（從地面落進車站）。
       const travel = outward[i] ? t : 1 - t;
       const [lng, lat] = positionOf(s, state);
       const metersPerLng = 111320 * Math.cos((lat * Math.PI) / 180);
-      const radius = flowRadius(s, state, maxRef) * spread[i];
 
-      // 邊走邊旋，軌跡才不會是一條直直的放射線。
-      const spin = outward[i] ? SWIRL * travel : -SWIRL * travel;
-      const headAngle = angle[i] + spin;
+      const column = flowColumn(s, state, maxRef);
+      const radius = column.radius * spread[i];
+      // 進站柱擺左邊、出站柱擺右邊，藍色的雨跟橘色的湧泉才不會混在同一根裡。
+      const offset = (outward[i] ? 1 : -1) * column.radius * SPLIT;
       const tailTravel = outward[i] ? travel - STREAK : travel + STREAK;
-      const tailAngle = angle[i] + (outward[i] ? SWIRL * tailTravel : -SWIRL * tailTravel);
 
-      const head = travel * radius;
-      const tail = tailTravel * radius;
+      // 邊升邊繞，像煙。頭尾各自算角度，拖尾才會是弧的。
+      const headAngle = angle[i] + DRIFT * travel;
+      const tailAngle = angle[i] + DRIFT * tailTravel;
 
-      source[i * 2] = lng + (Math.cos(tailAngle) * tail) / metersPerLng;
-      source[i * 2 + 1] = lat + (Math.sin(tailAngle) * tail) / metersPerLat;
-      target[i * 2] = lng + (Math.cos(headAngle) * head) / metersPerLng;
-      target[i * 2 + 1] = lat + (Math.sin(headAngle) * head) / metersPerLat;
+      source[i * 3] = lng + (offset + Math.cos(tailAngle) * radius) / metersPerLng;
+      source[i * 3 + 1] = lat + (Math.sin(tailAngle) * radius) / metersPerLat;
+      source[i * 3 + 2] = Math.max(0, tailTravel) * column.height;
+      target[i * 3] = lng + (offset + Math.cos(headAngle) * radius) / metersPerLng;
+      target[i * 3 + 1] = lat + (Math.sin(headAngle) * radius) / metersPerLat;
+      target[i * 3 + 2] = travel * column.height;
 
       // 兩端淡出，中間最亮。
-      const fade = Math.sin(Math.PI * t);
+      // 靠近地面最亮，往上／往下都淡出。
+      const fade = Math.sin(Math.PI * t) * (0.35 + 0.65 * (1 - travel));
       const color = outward[i] ? COLOR_OUT : COLOR_IN;
       const base = i * 4;
       colors[base] = color[0];
       colors[base + 1] = color[1];
       colors[base + 2] = color[2];
-      colors[base + 3] = Math.round(fade * 215);
+      colors[base + 3] = Math.round(fade * 235);
     }
   }
 
@@ -138,8 +146,8 @@ export function createFlow(data) {
     },
     get attributes() {
       return {
-        getSourcePosition: { value: source, size: 2 },
-        getTargetPosition: { value: target, size: 2 },
+        getSourcePosition: { value: source, size: 3 },
+        getTargetPosition: { value: target, size: 3 },
         getColor: { value: colors, size: 4, normalized: true }
       };
     }
@@ -147,13 +155,14 @@ export function createFlow(data) {
 }
 
 /**
- * 一個站的「流場半徑」：運量越大，人潮散開的範圍越大。
- * 量體因此同時反映在粒子數（密度）與流場大小（範圍）兩件事上，一眼就分得出大小站。
+ * 一個站的光柱尺寸：運量越大，柱子越高也越粗。
+ * 量體因此同時反映在粒子數（密度）、柱高、柱粗三件事上，一眼就分得出大小站。
  */
-export function flowRadius(station, state, maxRef) {
+export function flowColumn(station, state, maxRef) {
   const ratio = Math.min(
     1,
     Math.abs(stationValue(station, state.metric, state.frame)) / (maxRef || 1)
   );
-  return 260 + Math.sqrt(ratio) * 1150;
+  const scale = Math.sqrt(ratio);
+  return { height: 380 + scale * 4200, radius: 70 + scale * 240 };
 }
