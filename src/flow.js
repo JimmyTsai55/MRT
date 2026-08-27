@@ -55,6 +55,9 @@ export function createFlow(data) {
     const pairs = stations.map((s) => {
       const entering = valueAt(s.in, state.frame);
       const exiting = valueAt(s.out, state.frame);
+      // 當月沒有官方統計 → 不分配粒子。這裡若讓 NaN 流下去，sum 與 budget 都會變成 NaN，
+      // 整個人流模式會一顆粒子都不生。
+      if (!Number.isFinite(entering) || !Number.isFinite(exiting)) return [0, 0];
       if (state.metric === 'in') return [entering, 0];
       if (state.metric === 'out') return [0, exiting];
       if (state.metric === 'net') {
@@ -159,10 +162,9 @@ export function createFlow(data) {
  * 量體因此同時反映在粒子數（密度）、柱高、柱粗三件事上，一眼就分得出大小站。
  */
 export function flowColumn(station, state, maxRef) {
-  const ratio = Math.min(
-    1,
-    Math.abs(stationValue(station, state.metric, state.frame)) / (maxRef || 1)
-  );
+  const value = stationValue(station, state.metric, state.frame);
+  if (!Number.isFinite(value)) return { height: 0, radius: 0 };
+  const ratio = Math.min(1, Math.abs(value) / (maxRef || 1));
   const scale = Math.sqrt(ratio);
   return { height: 380 + scale * 4200, radius: 70 + scale * 240 };
 }

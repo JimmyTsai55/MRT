@@ -8,7 +8,9 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "data:stations": "python3 scripts/build_stations.py"
+    "test": "python3 scripts/test_prepare_ridership.py && python3 scripts/test_fetch_data_taipei.py && node scripts/test_frontend_nulls.mjs",
+    "data:stations": "python3 scripts/build_stations.py",
+    "data:update": "scripts/update_ridership.sh"
   },
   "dependencies": {
     "deck.gl": "^9.3.10",

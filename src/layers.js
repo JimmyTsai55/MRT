@@ -10,7 +10,7 @@ import {
   SolidPolygonLayer,
   TextLayer
 } from '@deck.gl/layers';
-import { stationValue, valueAt, formatCount, positionOf } from './data.js';
+import { stationValue, valueAt, formatCount, positionOf, hasStats } from './data.js';
 import { flowColumn } from './flow.js';
 
 export const COLOR_IN = [56, 189, 248];
@@ -20,6 +20,8 @@ export const COLOR_OUT = [251, 146, 60];
 const MAX_HEIGHT = 5200;
 
 function normalize(value, maxRef, scaleMode) {
+  // 無統計（NaN）收斂成 0，免得漏掉過濾的呼叫端把 NaN 灌進頂點座標，整個圖層都不見。
+  if (!Number.isFinite(value)) return 0;
   const ratio = Math.min(1, Math.abs(value) / (maxRef || 1));
   return (scaleMode === 'sqrt' ? Math.sqrt(ratio) : ratio) * MAX_HEIGHT;
 }
@@ -86,12 +88,16 @@ function wallQuads(data, state, maxRef) {
       const ids = line.stationIds?.[pathIndex];
       if (!ids) return;
 
+      // null = 那一站當月沒有官方統計。把高度壓成 0 會讓牆貼地，看起來就像運量歸零，
+      // 所以整段不畫，寧可讓牆在那裡斷開。
       const heights = ids.map((id) => {
         const station = stationById.get(id);
-        return station ? elevationOf(station, state, maxRef) * state.elevScale : 0;
+        if (!station || !hasStats(station, state.frame)) return null;
+        return elevationOf(station, state, maxRef) * state.elevScale;
       });
 
       for (let i = 0; i < path.length - 1; i++) {
+        if (heights[i] === null || heights[i + 1] === null) continue;
         const [aLng, aLat] = path[i];
         const [bLng, bLat] = path[i + 1];
         const mLng = (aLng + bLng) / 2;
@@ -130,13 +136,18 @@ function ridgePaths(data, state, maxRef) {
     line.paths.forEach((path, pathIndex) => {
       const ids = line.stationIds?.[pathIndex];
       if (!ids) return;
-      out.push({
-        path: path.map(([lng, lat], i) => {
-          const station = stationById.get(ids[i]);
-          return [lng, lat, station ? elevationOf(station, state, maxRef) * state.elevScale : 0];
-        }),
-        color: line.color
+      // 跟牆一樣，碰到沒有統計的站就把稜線斷開，不要用 0 把它接下去。
+      let run = [];
+      const flush = () => {
+        if (run.length > 1) out.push({ path: run, color: line.color });
+        run = [];
+      };
+      path.forEach(([lng, lat], i) => {
+        const station = stationById.get(ids[i]);
+        if (!station || !hasStats(station, state.frame)) return flush();
+        run.push([lng, lat, elevationOf(station, state, maxRef) * state.elevScale]);
       });
+      flush();
     });
   }
   return out;
@@ -144,6 +155,9 @@ function ridgePaths(data, state, maxRef) {
 
 export function buildLayers({ data, state, maxRef, labelStations, onHover, flow }) {
   const { stations, lines } = data;
+  // 當月有官方統計的站。沒有統計的站不長柱子、不發光、不噴粒子——但站點底盤還是照畫，
+  // 路網圖上那一站仍然存在，只是那個月沒有數字。
+  const live = stations.filter((s) => hasStats(s, state.frame));
   const trigger = [state.frame, state.metric, state.scaleMode];
   const layers = [];
 
@@ -175,7 +189,7 @@ export function buildLayers({ data, state, maxRef, labelStations, onHover, flow 
   layers.push(
     new ScatterplotLayer({
       id: 'ground-glow',
-      data: GLOW_RINGS.flatMap(([scale, alpha]) => stations.map((s) => ({ s, scale, alpha }))),
+      data: GLOW_RINGS.flatMap(([scale, alpha]) => live.map((s) => ({ s, scale, alpha }))),
       pickable: false,
       radiusUnits: 'meters',
       getPosition: (d) => positionOf(d.s, state),
@@ -193,7 +207,7 @@ export function buildLayers({ data, state, maxRef, labelStations, onHover, flow 
     })
   );
 
-  // 站點底盤：運量為零（例如環狀線通車前）的站也還看得到位置。
+  // 站點底盤：當月沒有統計（例如環狀線通車前）的站也還看得到位置，只是不會有柱子。
   // 人流模式有自己的站點光核，這層就不畫了。
   if (state.style !== 'flow') {
     layers.push(
@@ -225,7 +239,7 @@ export function buildLayers({ data, state, maxRef, labelStations, onHover, flow 
   }
 
   const columnBase = {
-    data: stations,
+    data: live,
     pickable: true,
     extruded: true,
     // 頂面描一圈亮邊，柱子在暗底圖上比較「立」得起來。
@@ -247,7 +261,7 @@ export function buildLayers({ data, state, maxRef, labelStations, onHover, flow 
     layers.push(
       new ScatterplotLayer({
         id: 'flow-core',
-        data: stations,
+        data: live,
         pickable: true,
         radiusUnits: 'meters',
         getPosition: (d) => positionOf(d, state),

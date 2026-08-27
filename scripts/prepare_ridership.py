@@ -396,7 +396,8 @@ def main() -> int:
         print("   請在 scripts/prepare_ridership.py 的 ALIASES 補對照，", file=sys.stderr)
         print("   或在 data/source 的站點資料補上座標後重跑 build_stations.py。", file=sys.stderr)
 
-    # 站號 → {期間: [進, 出]}。--merge 的話先把既有的讀進來當底。
+    # 站號 → {期間: [進, 出]}。沒有這個期間的鍵 = 官方那個月沒有這站的統計，
+    # 跟「統計值是 0」是兩回事，輸出時會寫成 null。--merge 的話先把既有的讀進來當底。
     table: dict[str, dict[str, list[int]]] = {s["id"]: {} for s in stations}
     old_meta: dict = {}
     if args.merge and args.out.exists():
@@ -406,29 +407,71 @@ def main() -> int:
             if entry["id"] not in table:
                 continue
             for i, period in enumerate(old["periods"]):
-                table[entry["id"]][period] = [entry["in"][i], entry["out"][i]]
+                entering, exiting = entry["in"][i], entry["out"][i]
+                if entering is None and exiting is None:
+                    continue
+                table[entry["id"]][period] = [entering, exiting]
         print(f"\n合併既有的 {len(old['periods'])} 期（{old['periods'][0]} ~ {old['periods'][-1]}）")
 
-    # 這次讀到的期間覆蓋掉舊的同一期。
+    # 這次讀到的期間覆蓋掉舊的同一期。這次的檔案裡完全沒提到的站，那幾期就是「沒有統計」，
+    # 不能補 0——北捷的統計表在環狀線 2023-05 移交新北捷運後就不再含那 14 站，
+    # 補 0 會讓圖上看起來像是運量歸零。
+    dropped: dict[str, list[str]] = defaultdict(list)
     for station in stations:
         key = station["name"]
         for period in periods:
+            entering = bucket.get((key, period, "in"))
+            exiting = bucket.get((key, period, "out"))
+            if entering is None and exiting is None:
+                if table[station["id"]].pop(period, None) is not None:
+                    dropped[station["name"]].append(period)
+                continue
             table[station["id"]][period] = [
-                int(round(bucket.get((key, period, "in"), 0))),
-                int(round(bucket.get((key, period, "out"), 0))),
+                int(round(entering or 0)),
+                int(round(exiting or 0)),
             ]
+
+    if dropped:
+        names = sorted(dropped)
+        print(
+            f"\n注意：有 {len(names)} 站在這次的檔案裡沒有出現，但既有資料涵蓋了同樣的期間，"
+            "那些月份會改成「無統計」（null）而不是 0：",
+            file=sys.stderr,
+        )
+        for name in names[:10]:
+            months = dropped[name]
+            span = months[0] if len(months) == 1 else f"{months[0]} ~ {months[-1]}（{len(months)} 期）"
+            print(f"   {name}：{span}", file=sys.stderr)
+        if len(names) > 10:
+            print(f"   …另外還有 {len(names) - 10} 站", file=sys.stderr)
 
     all_periods = sorted({p for series in table.values() for p in series})
     out_stations = [
         {
             "id": station["id"],
-            "in": [table[station["id"]].get(p, [0, 0])[0] for p in all_periods],
-            "out": [table[station["id"]].get(p, [0, 0])[1] for p in all_periods],
+            "in": [table[station["id"]].get(p, [None, None])[0] for p in all_periods],
+            "out": [table[station["id"]].get(p, [None, None])[1] for p in all_periods],
         }
         for station in stations
     ]
 
     covered = sum(1 for s in out_stations if any(s["in"]) or any(s["out"]))
+
+    # periods 是一個陣列，前端把 index 當成等距的時間軸，所以中間缺月會被壓成一格，
+    # 動畫看起來就是「一個月之內掉了兩年」。只補部分年度時最容易踩到。
+    gaps = []
+    for earlier, later in zip(all_periods, all_periods[1:]):
+        y1, m1 = (int(x) for x in earlier.split("-"))
+        y2, m2 = (int(x) for x in later.split("-"))
+        missing = (y2 - y1) * 12 + (m2 - m1) - 1
+        if missing > 0:
+            gaps.append((earlier, later, missing))
+    if gaps:
+        print(f"\n⚠️ 時間軸中間缺了月份，動畫會把這些空白壓成一格：", file=sys.stderr)
+        for earlier, later, missing in gaps:
+            print(f"   {earlier} → {later}（少了 {missing} 個月）", file=sys.stderr)
+        print("   把中間的年度也補進來，或用 --since 從缺口之後開始。", file=sys.stderr)
+
     files = [p.name for p in paths]
     if args.merge:
         files = sorted(set(old_meta.get("files", [])) | set(files))

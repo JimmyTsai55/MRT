@@ -156,6 +156,74 @@ def main() -> int:
         assert full["periods"] == merged["periods"] and full["stations"] == merged["stations"]
         print("✓ 跨檔案覆蓋 + --merge 與一次全跑等價")
 
+        # 7) 補新年度：北捷的統計表從 2023-05 環狀線移交新北捷運後就不再含那條線。
+        #    這種站在新檔案裡「不存在」，不等於「運量是 0」——補 0 的話圖上會看起來像運量歸零。
+        out2 = tmp / "incremental.json"
+        base_csv = tmp / "base.csv"
+        pd.DataFrame(
+            [
+                {"年月": "2021-11", "站名": "台北車站", "進站": 1000, "出站": 1100},
+                {"年月": "2021-12", "站名": "台北車站", "進站": 1010, "出站": 1110},
+                {"年月": "2021-11", "站名": "新北產業園區", "進站": 300, "出站": 310},
+                {"年月": "2021-12", "站名": "新北產業園區", "進站": 305, "出站": 315},
+            ]
+        ).to_csv(base_csv, index=False, encoding="utf-8-sig")
+        run(base_csv, out2)
+
+        # 新的年度：沒有環狀線，而且市政府那個月是貨真價實的 0（颱風停駛之類），要跟「無統計」分開。
+        next_csv = tmp / "next.csv"
+        pd.DataFrame(
+            [
+                {"年月": "2022-01", "站名": "台北車站", "進站": 1200, "出站": 1250},
+                {"年月": "2022-02", "站名": "台北車站", "進站": 1300, "出站": 1350},
+                {"年月": "2022-01", "站名": "市政府", "進站": 0, "出站": 0},
+                {"年月": "2022-02", "站名": "市政府", "進站": 700, "出站": 690},
+            ]
+        ).to_csv(next_csv, index=False, encoding="utf-8-sig")
+        merged2 = run(next_csv, out2, "--merge")
+
+        assert merged2["periods"] == ["2021-11", "2021-12", "2022-01", "2022-02"], merged2["periods"]
+
+        taipei = series(merged2, "R10")
+        assert taipei["in"] == [1000, 1010, 1200, 1300], taipei
+        assert taipei["out"] == [1100, 1110, 1250, 1350], taipei
+
+        # 環狀線：舊的兩期留著，新的兩期是 null（不是 0）
+        circular = series(merged2, "Y20")
+        assert circular["in"] == [300, 305, None, None], circular
+        assert circular["out"] == [310, 315, None, None], circular
+
+        # 真正的 0 要留成 0；沒出現在任何檔案裡的期間才是 null
+        city_hall = series(merged2, "BL18")
+        assert city_hall["in"] == [None, None, 0, 700], city_hall
+        assert city_hall["out"] == [None, None, 0, 690], city_hall
+
+        # 完全沒出現過的站，整條都是 null，不是一整排 0
+        never = series(merged2, "Y19")
+        assert never["in"] == [None] * 4, never
+        assert never["out"] == [None] * 4, never
+        print("✓ 增量補年度：新檔案沒有的站是 null 而不是 0，真正的 0 保留")
+
+        # 8) 重跑同一段期間但少了某站 → 那站那幾期要退回「無統計」，並且要出聲提醒。
+        shrunk_csv = tmp / "shrunk.csv"
+        pd.DataFrame(
+            [
+                {"年月": "2021-11", "站名": "台北車站", "進站": 1000, "出站": 1100},
+                {"年月": "2021-12", "站名": "台北車站", "進站": 1010, "出站": 1110},
+            ]
+        ).to_csv(shrunk_csv, index=False, encoding="utf-8-sig")
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPT), str(shrunk_csv), "--out", str(out2), "--merge"],
+            capture_output=True,
+            text=True,
+        )
+        assert proc.returncode == 0, proc.stderr
+        reduced = json.loads(out2.read_text(encoding="utf-8"))
+        again = series(reduced, "Y20")
+        assert again["in"][:2] == [None, None], again
+        assert "新北產業園區" in proc.stderr, proc.stderr
+        print("✓ 重跑後不見的站會退回「無統計」並在 stderr 提醒")
+
     print("\n全部通過。")
     return 0
 

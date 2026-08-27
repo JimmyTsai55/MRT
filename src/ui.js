@@ -1,6 +1,6 @@
 // 畫面上的 DOM 元件：排行榜、時間軸小圖、tooltip。
 
-import { formatCount, formatPeriod, stationValue, valueAt } from './data.js';
+import { formatCount, formatPeriod, stationValue, valueAt, hasStats } from './data.js';
 import { COLOR_IN, COLOR_OUT } from './layers.js';
 
 const RANK_ROWS = 12;
@@ -68,14 +68,17 @@ export function createRankBoard(container, stations) {
 }
 
 export function rankStations(stations, state) {
-  const ranked = stations.map((station) => ({
-    station,
-    value: stationValue(station, state.metric, state.frame),
-    parts: {
-      in: valueAt(station.in, state.frame),
-      out: valueAt(station.out, state.frame)
-    }
-  }));
+  // 當月沒有官方統計的站不列入排名：NaN 進到 sort 的比較函式會讓順序變成未定義行為。
+  const ranked = stations
+    .filter((station) => hasStats(station, state.frame))
+    .map((station) => ({
+      station,
+      value: stationValue(station, state.metric, state.frame),
+      parts: {
+        in: valueAt(station.in, state.frame),
+        out: valueAt(station.out, state.frame)
+      }
+    }));
   ranked.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
   return ranked;
 }
@@ -119,10 +122,23 @@ function tooltipSpark(station, frame) {
   const width = 158;
   const height = 34;
   const totals = Array.from(station.in, (v, i) => v + station.out[i]);
-  const max = Math.max(...totals) || 1;
+  const known = totals.filter(Number.isFinite);
+  const max = (known.length ? Math.max(...known) : 0) || 1;
   const x = (i) => (i / Math.max(1, totals.length - 1)) * width;
   const y = (v) => height - (v / max) * (height - 4) - 2;
-  const line = totals.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join('');
+  // 沒有統計的月份要讓折線斷掉（下一個有值的點重新 M），連過去會看起來像掉到 0。
+  let pen = 'M';
+  const line = totals
+    .map((v, i) => {
+      if (!Number.isFinite(v)) {
+        pen = 'M';
+        return '';
+      }
+      const cmd = pen;
+      pen = 'L';
+      return `${cmd}${x(i).toFixed(1)},${y(v).toFixed(1)}`;
+    })
+    .join('');
   const cursor = x(Math.min(totals.length - 1, Math.max(0, frame)));
   return `<svg class="tt-spark" width="${width}" height="${height}">
       <path d="${line}" fill="none" stroke="${rgba(COLOR_IN, 0.75)}" stroke-width="1.3"/>
@@ -138,6 +154,7 @@ export function renderTooltip(element, info, state, data, rankIndex) {
   }
   const entering = valueAt(station.in, state.frame);
   const exiting = valueAt(station.out, state.frame);
+  const known = Number.isFinite(entering) && Number.isFinite(exiting);
   const chips = station.lines
     .map((code) => {
       const line = data.lines.find((l) => l.code === code);
@@ -149,13 +166,17 @@ export function renderTooltip(element, info, state, data, rankIndex) {
     <div class="tt-name">${station.name}</div>
     <div class="tt-sub">${station.name_en}</div>
     <div style="margin-bottom:7px">${chips}</div>
-    <div class="tt-grid">
+    ${
+      known
+        ? `<div class="tt-grid">
       <span>進站</span><span style="color:${rgba(COLOR_IN)}">${formatCount(entering)}</span>
       <span>出站</span><span style="color:${rgba(COLOR_OUT)}">${formatCount(exiting)}</span>
       <span>合計</span><span>${formatCount(entering + exiting)}</span>
       <span>淨流</span><span>${entering - exiting >= 0 ? '+' : ''}${formatCount(entering - exiting)}</span>
       <span>名次</span><span>${rankIndex >= 0 ? `第 ${rankIndex + 1} 名` : '—'}</span>
-    </div>
+    </div>`
+        : `<div class="tt-nodata">這個月沒有官方統計</div>`
+    }
     ${tooltipSpark(station, state.frame)}
     <div class="tt-sub" style="margin:6px 0 0">${formatPeriod(data.periods[Math.round(state.frame)])}</div>`;
 

@@ -24,6 +24,8 @@ function toFakeLngLat([x, y]) {
   return [lng0 + (x * SCHEMATIC_UNIT_METERS) / metersPerLng, lat0 + (y * SCHEMATIC_UNIT_METERS) / metersPerLat];
 }
 
+const toValue = (v) => (v === null || v === undefined ? NaN : v);
+
 export async function loadAll() {
   const [stationsDoc, linesDoc, ridershipDoc, schematicDoc] = await Promise.all([
     getJSON('stations.json'),
@@ -48,8 +50,10 @@ export async function loadAll() {
         position: [station.lng, station.lat],
         schematicPosition: schematic ? toFakeLngLat(schematic) : [station.lng, station.lat],
         lineColor: colorByLine.get(station.lines[0]) || [150, 150, 150],
-        in: Float64Array.from(series.in),
-        out: Float64Array.from(series.out)
+        // 官方那個月沒有這站的統計時，JSON 是 null；轉成 NaN 當作「無統計」的哨兵值，
+        // 跟「統計值是 0」區分開來（環狀線通車前、以及 2023-05 移交新北捷運後都是這種情形）。
+        in: Float64Array.from(series.in, toValue),
+        out: Float64Array.from(series.out, toValue)
       };
     });
 
@@ -61,9 +65,10 @@ export async function loadAll() {
     );
   }
 
-  // 全網每月總量，時間軸下方的小面積圖用。
+  // 全網每月總量，時間軸下方的小面積圖用。當月沒有統計的站不計入——
+  // 這跟北捷自己的報表口徑一致（環狀線移交後就不再算進北捷的總量）。
   const networkTotals = periods.map((_, i) =>
-    stations.reduce((sum, s) => sum + s.in[i] + s.out[i], 0)
+    stations.reduce((sum, s) => (Number.isFinite(s.in[i]) ? sum + s.in[i] + s.out[i] : sum), 0)
   );
 
   // 各種顯示模式的最大值，用來把人次換算成柱高。
@@ -74,6 +79,8 @@ export async function loadAll() {
   let maxSum = 0;
   for (const station of stations) {
     for (let i = 0; i < periods.length; i++) {
+      // NaN（無統計）要跳過：Math.max 只要碰到一次 NaN，之後整條就都是 NaN 了。
+      if (!Number.isFinite(station.in[i]) || !Number.isFinite(station.out[i])) continue;
       maxIn = Math.max(maxIn, station.in[i]);
       maxOut = Math.max(maxOut, station.out[i]);
       maxNet = Math.max(maxNet, Math.abs(station.in[i] - station.out[i]));
@@ -118,6 +125,14 @@ export function valueAt(series, frame) {
   const i = Math.floor(frame);
   const t = frame - i;
   return series[i] + (series[i + 1] - series[i]) * t;
+}
+
+/**
+ * 這一幀這個站有沒有官方統計。內插會跨到相鄰的月份，所以只要有一端是「無統計」就算沒有——
+ * 寧可不畫，也不要拿唯一有值的那一端當成整段都有資料。
+ */
+export function hasStats(station, frame) {
+  return Number.isFinite(valueAt(station.in, frame)) && Number.isFinite(valueAt(station.out, frame));
 }
 
 export function stationValue(station, metric, frame) {

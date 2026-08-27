@@ -64,7 +64,13 @@ npm run dev          # → http://localhost:5173
 
 ```bash
 pip install -r requirements.txt
+# odfpy 在較新的 setuptools 下用舊式 setup.py 會 build 失敗（AttributeError: install_layout），
+# 出現這個錯就改用：pip install --use-pep517 odfpy
 
+# 最省事的做法：一行跑完轉檔 → 併入 → 驗證（下面那些步驟它都會做）
+scripts/update_ridership.sh data/raw/*.ods
+
+# 想自己一步一步來的話：
 # 1. 先看官方檔案的結構與程式判定的排版
 python3 scripts/prepare_ridership.py --inspect data/raw/各站進出量統計.ods
 
@@ -130,10 +136,19 @@ python3 scripts/prepare_ridership.py data/raw/*.csv --until 2021-12
 去掉路線代碼前綴（板橋有兩組閘門，官方分成 `BL板橋` / `Y板橋`，會自動加總回同一站）。
 對不到座標的站會在 stderr 列出來，補進 `scripts/prepare_ridership.py` 的 `ALIASES` 就好。
 
-解析邏輯有煙霧測試（自己造假檔跑三種排版）：
+三支測試一起跑：
+
+```bash
+npm test
+```
+
+分別是解析邏輯的煙霧測試（自己造假檔跑三種排版，另外驗增量補年度時「無統計」不會被寫成 0）、
+data.taipei 分頁抓取的測試，以及前端「無統計」處理的測試：
 
 ```bash
 python3 scripts/test_prepare_ridership.py
+python3 scripts/test_fetch_data_taipei.py
+node scripts/test_frontend_nulls.mjs
 ```
 
 ## 專案結構
@@ -159,6 +174,8 @@ scripts/
   test_prepare_ridership.py    上面那支的煙霧測試
   fetch_data_taipei.py         從 data.taipei 開放 API 分頁抓資料集 → CSV
   test_fetch_data_taipei.py    上面那支的分頁測試（用本機假伺服器）
+  update_ridership.sh          補新年度的一鍵流程：轉檔 → 併入 → 驗證
+  test_frontend_nulls.mjs      驗證「無統計」有正確走完前端這條鏈
   bundle_singlefile.mjs        打包成單一 HTML（見下）
 data/source/                   原始站點資料（進版控管，方便重跑）
 ```
@@ -175,6 +192,17 @@ data/source/                   原始站點資料（進版控管，方便重跑�
 
 `in` / `out` 的長度必須等於 `periods`，`id` 對應 `stations.json` 的站號。
 自己接後端（FastAPI 之類）的話，出一樣的 JSON 就能直接換掉。
+
+**`null` 代表「官方那個月沒有這站的統計」，跟數值 `0` 是兩回事**，兩者在圖上的表現完全不同：
+
+| | 意思 | 圖上 |
+| --- | --- | --- |
+| `0` | 官方有統計，數字就是 0 | 照畫，只是柱子高度為 0 |
+| `null` | 官方根本沒有這站這個月的資料 | 不長柱子、不進排行榜、不算進全網總量、牆與稜線在那裡斷開；滑上去顯示「這個月沒有官方統計」 |
+
+會出現 `null` 的情形：某條線還沒通車（環狀線 2020-01 之前）、已經移出北捷的統計範圍
+（環狀線 2023-05 之後），或某個年度的檔案還沒補進來。轉檔程式**不會**把缺的資料補成 0——
+補 0 會讓畫面看起來像運量歸零，那是憑空捏造的數字。
 
 ## 打包
 
@@ -215,7 +243,9 @@ node scripts/bundle_singlefile.mjs   # → dist/standalone.html（單檔，含�
   粒子只在各站自己的上下方向流動，沒有牽涉站與站之間。
   「誰從哪站到哪站」需要 OD 資料，這份統計沒有，所以不編。要做真正的站間流動請見〈已知限制〉。
 - **環狀線**：2023-05-23 起改由新北大眾捷運營運，北捷的統計表已不含這條線；
-  資料裡仍保留這 14 站（`operator: "NTMetro"`），真實資料轉進來後它們會是 0。
+  資料裡仍保留這 14 站（`operator: "NTMetro"`），但 2023-06 之後的月份是 `null`（無統計）而不是 0，
+  所以圖上那一段會是「有站點、沒有柱子」，而不是「運量掉到零」。
+  2020-01 通車之前也是同樣的處理。
 
 ## 已知限制
 
@@ -223,7 +253,11 @@ node scripts/bundle_singlefile.mjs   # → dist/standalone.html（單檔，含�
   官方統計表若有這站，轉檔時會在 stderr 提醒對不到；補上座標重跑 `build_stations.py` 即可。
 - 底圖（CARTO 的 dark-matter／positron）需要連網。抓不到時會自動退回純色背景，
   柱狀圖與路線照樣可以看，也可以直接在底圖切成「無」。
-- 現成資料只到 2021-12。2022 年之後要自己從官方站台下載補上（見上面）。
+- 現成資料只到 2021-12。2022 年之後要自己從官方站台下載補上（見上面）——
+  `scripts/update_ridership.sh` 會把轉檔、併入、驗證串起來，並在下列情況出聲提醒：
+  站名對不到座標、某站從有統計退回無統計、月份總量異常偏低（殘月）、
+  以及**時間軸中間缺月**（只補部分年度時很容易發生，前端把 index 當等距時間，
+  缺的那段會被壓成一格，動畫看起來像一個月之內掉了兩年）。
 - 目前只做到「各站進出量」。要做真正的 OD 流向（誰從哪站到哪站），資料要換成
   [臺北捷運各站分時進出量統計OD](https://data.taipei/dataset/detail?id=63f31c7e-7fc3-418b-bd82-b95158755b4d)，
   圖層換成 `ArcLayer`（弧線）或 `TripsLayer`（沿路線移動的光點）。
@@ -232,8 +266,10 @@ node scripts/bundle_singlefile.mjs   # → dist/standalone.html（單檔，含�
 ## 資料原則
 
 圖上的每一個數字都來自官方統計，沒有任何推估或補值。
-對不到座標的站會被標出來而不是猜一個位置，缺的月份就是缺（不內插補洞）——
+對不到座標的站會被標出來而不是猜一個位置，缺的月份就是缺（不內插補洞，也不補 0，見上面的 `null`）——
 時間軸上的內插只影響動畫的中間影格，`ridership.json` 裡存的都是原始月統計值。
+內插也不會跨過缺口：只要相鄰兩個月有一邊沒有統計，那一段就整個不畫，
+不會拿唯一有值的那一端長出半根柱子。
 
 `scripts/test_prepare_ridership.py` 裡有幾筆刻意造出來的假資料（含「火星站」這種不存在的站名），
 那是用來驗證解析器與站名比對的測試夾具，不會進到 `public/data`，也不會出現在圖上。
